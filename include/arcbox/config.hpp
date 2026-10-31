@@ -13,6 +13,12 @@ struct Config {
     long connect_timeout_seconds = 15;
     long timeout_seconds = 60;
 
+    // PSI-aware admission control.
+    long min_mem_available_kb = 1500LL * 1024;
+    double psi_some_avg10_max = 10.0;
+    long throttle_sleep_seconds = 15;
+    long pause_sleep_seconds = 60;
+
     bool use_cgroup = true;
     std::string slice;
     std::string memory_max = "1800M";

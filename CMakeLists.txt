@@ -21,6 +21,7 @@ add_executable(arcbox
     src/metadata.cpp
     src/warc.cpp
     src/cgroup.cpp
+    src/memory.cpp
     src/commands.cpp
     src/web.cpp
 )

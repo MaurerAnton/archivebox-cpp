@@ -270,6 +270,28 @@ MISSING_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' "$WEB_BASE/snapshot/99
 POST_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$WEB_BASE/")"
 [[ "$POST_STATUS" == "405" ]] || fail "POST / returned $POST_STATUS"
 
+# --- PSI-aware admission guard ---
+ADM_DATA="$DATA/admission"
+"$BIN" --data "$ADM_DATA" init >/dev/null
+"$BIN" --data "$ADM_DATA" add "http://127.0.0.1:$PORT/" >/dev/null
+
+# An unreachable memory floor must defer the capture instead of running it.
+ADM_OUT="$(ARCBOX_MIN_MEM_AVAILABLE_KB=999999999 \
+    "$BIN" --data "$ADM_DATA" daemon --once --no-cgroup 2>&1)"
+assert_contains "$ADM_OUT" "admission pause" "guard pauses on low memory"
+assert_contains "$ADM_OUT" "leaving queued" "guard leaves snapshot queued"
+"$BIN" --data "$ADM_DATA" list | grep -Fq "queued" \
+    || fail "snapshot should stay queued under memory pressure"
+
+# With the floor effectively removed the same queue must go through.
+ARCBOX_MIN_MEM_AVAILABLE_KB=1 "$BIN" --data "$ADM_DATA" daemon --once --no-cgroup \
+    >"$DATA/admission-proceed.log" 2>&1
+if grep -Fq "admission pause" "$DATA/admission-proceed.log"; then
+    fail "guard still paused with a 1 kB floor"
+fi
+"$BIN" --data "$ADM_DATA" list | grep -Fq "queued" \
+    && fail "snapshot should have been attempted with a 1 kB floor"
+
 kill "$WEB_PID" 2>/dev/null || true
 wait "$WEB_PID" 2>/dev/null || true
 WEB_PID=""

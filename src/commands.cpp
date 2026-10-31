@@ -13,6 +13,7 @@
 #include "arcbox/capture_http.hpp"
 #include "arcbox/cgroup.hpp"
 #include "arcbox/db.hpp"
+#include "arcbox/memory.hpp"
 #include "arcbox/metadata.hpp"
 #include "arcbox/util.hpp"
 #include "arcbox/warc.hpp"
@@ -649,6 +650,25 @@ int cmd_daemon(Config& cfg,
             std::this_thread::sleep_for(std::chrono::seconds(2));
             continue;
         }
+
+        HostMemory mem;
+        read_host_memory(mem);
+        AdmissionDecision decision = admit_capture(cfg, mem);
+        if (decision.action != Admission::Proceed) {
+            std::cout << "arcbox: admission " << admission_name(decision.action)
+                      << ": " << decision.reason;
+            if (once) {
+                std::cout << "; --once, leaving queued\n";
+                std::cout.flush();
+                break;
+            }
+            std::cout << "; retrying in " << decision.sleep_seconds << "s\n";
+            std::cout.flush();
+            std::this_thread::sleep_for(
+                std::chrono::seconds(decision.sleep_seconds));
+            continue;
+        }
+
         do_capture(cfg, db, snapshot->id, use_cgroup, use_blocklist);
     }
     return 0;

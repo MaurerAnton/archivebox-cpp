@@ -20,6 +20,18 @@ static long parse_long(const char* name, long fallback) {
     }
 }
 
+static double parse_double(const char* name, double fallback) {
+    std::string value = getenv_or(name, "");
+    if (value.empty()) {
+        return fallback;
+    }
+    try {
+        return std::stod(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
 Config Config::load() {
     Config cfg;
     std::string data = getenv_or("ARCBOX_DATA", "");
@@ -34,6 +46,15 @@ Config Config::load() {
         parse_long("ARCBOX_CONNECT_TIMEOUT", cfg.connect_timeout_seconds);
     cfg.timeout_seconds =
         parse_long("ARCBOX_TIMEOUT", cfg.timeout_seconds);
+
+    cfg.min_mem_available_kb =
+        parse_long("ARCBOX_MIN_MEM_AVAILABLE_KB", cfg.min_mem_available_kb);
+    cfg.psi_some_avg10_max =
+        parse_double("ARCBOX_PSI_SOME_MAX", cfg.psi_some_avg10_max);
+    cfg.throttle_sleep_seconds =
+        parse_long("ARCBOX_THROTTLE_SLEEP", cfg.throttle_sleep_seconds);
+    cfg.pause_sleep_seconds =
+        parse_long("ARCBOX_PAUSE_SLEEP", cfg.pause_sleep_seconds);
 
     cfg.use_cgroup = getenv_or("ARCBOX_NO_CGROUP", "") != "1";
     cfg.slice = getenv_or("ARCBOX_SLICE", "");
