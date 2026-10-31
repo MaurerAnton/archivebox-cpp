@@ -224,6 +224,137 @@ std::string url_canonicalize(const std::string& input) {
     return scheme + "://" + authority + tail;
 }
 
+std::string url_origin(const std::string& url) {
+    std::size_t scheme = url.find("://");
+    if (scheme == std::string::npos) {
+        return {};
+    }
+    std::size_t begin = scheme + 3;
+    std::size_t end = url.find_first_of("/?#", begin);
+    return url.substr(0, end == std::string::npos ? url.size() : end);
+}
+
+static std::string normalize_path(const std::string& url) {
+    std::size_t scheme = url.find("://");
+    if (scheme == std::string::npos) {
+        return url;
+    }
+    std::size_t authority_end = url.find_first_of("/?#", scheme + 3);
+    if (authority_end == std::string::npos ||
+        url[authority_end] != '/') {
+        return url;
+    }
+
+    std::size_t path_end = url.find_first_of("?#", authority_end);
+    std::string path = url.substr(
+        authority_end, path_end == std::string::npos
+                           ? std::string::npos
+                           : path_end - authority_end);
+    std::string suffix = path_end == std::string::npos
+                             ? std::string{}
+                             : url.substr(path_end);
+
+    std::vector<std::string> segments;
+    std::string segment;
+    for (std::size_t i = 1; i <= path.size(); ++i) {
+        if (i == path.size() || path[i] == '/') {
+            if (segment.empty()) {
+                // Collapse repeated slashes.
+            } else if (segment == ".") {
+                // Skip.
+            } else if (segment == "..") {
+                if (!segments.empty()) {
+                    segments.pop_back();
+                }
+            } else {
+                segments.push_back(segment);
+            }
+            segment.clear();
+        } else {
+            segment.push_back(path[i]);
+        }
+    }
+
+    std::string out = url.substr(0, authority_end) + "/";
+    for (std::size_t i = 0; i < segments.size(); ++i) {
+        if (i > 0) {
+            out.push_back('/');
+        }
+        out += segments[i];
+    }
+    if (!path.empty() && path.back() == '/' && !segments.empty()) {
+        out.push_back('/');
+    }
+    return out + suffix;
+}
+
+std::string url_resolve(const std::string& base, const std::string& relative) {
+    std::string href = trim(relative);
+    if (href.empty() || href[0] == '#') {
+        return {};
+    }
+
+    std::size_t colon = href.find(':');
+    std::size_t slash = href.find('/');
+    if (colon != std::string::npos &&
+        (slash == std::string::npos || colon < slash)) {
+        std::string scheme = lower(href.substr(0, colon));
+        if (scheme != "http" && scheme != "https") {
+            return {};
+        }
+        return url_canonicalize(href);
+    }
+
+    std::string base_clean = base;
+    std::size_t fragment = base_clean.find('#');
+    if (fragment != std::string::npos) {
+        base_clean.erase(fragment);
+    }
+    std::string origin = url_origin(base_clean);
+    if (origin.empty()) {
+        return {};
+    }
+
+    if (starts_with(href, "//")) {
+        std::size_t scheme_end = origin.find("://");
+        std::string scheme =
+            scheme_end == std::string::npos
+                ? "https"
+                : lower(origin.substr(0, scheme_end));
+        return normalize_path(scheme + ":" + href);
+    }
+    if (href[0] == '/') {
+        return normalize_path(origin + href);
+    }
+    if (href[0] == '?') {
+        std::size_t query = base_clean.find('?');
+        if (query != std::string::npos) {
+            base_clean.erase(query);
+        }
+        return normalize_path(base_clean + href);
+    }
+
+    std::string base_without_query = base_clean;
+    std::size_t query = base_without_query.find('?');
+    if (query != std::string::npos) {
+        base_without_query.erase(query);
+    }
+
+    std::string prefix;
+    std::size_t last_slash = base_without_query.rfind('/');
+    std::size_t scheme_end = origin.find("://");
+    std::size_t authority_begin =
+        scheme_end == std::string::npos ? 0 : scheme_end + 3;
+    if (last_slash != std::string::npos &&
+        last_slash >= authority_begin) {
+        prefix = base_without_query.substr(0, last_slash + 1);
+    } else {
+        prefix = origin + "/";
+    }
+
+    return normalize_path(prefix + href);
+}
+
 static std::string decode_entity(const std::string& entity) {
     if (entity == "amp") return "&";
     if (entity == "lt") return "<";
@@ -242,8 +373,29 @@ static std::string decode_entity(const std::string& entity) {
         } catch (...) {
             return "&" + entity + ";";
         }
-        if (value > 0 && value < 128) {
+        if (value == 0x09 || value == 0x0A || value == 0x0D) {
+            return " ";
+        }
+        if (value >= 0x20 && value < 0x7F) {
             return std::string(1, static_cast<char>(value));
+        }
+        if (value >= 0x80 && value <= 0x10FFFF &&
+            !(value >= 0xD800 && value <= 0xDFFF)) {
+            std::string out;
+            if (value < 0x800) {
+                out.push_back(static_cast<char>(0xC0 | (value >> 6)));
+                out.push_back(static_cast<char>(0x80 | (value & 0x3F)));
+            } else if (value < 0x10000) {
+                out.push_back(static_cast<char>(0xE0 | (value >> 12)));
+                out.push_back(static_cast<char>(0x80 | ((value >> 6) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | (value & 0x3F)));
+            } else {
+                out.push_back(static_cast<char>(0xF0 | (value >> 18)));
+                out.push_back(static_cast<char>(0x80 | ((value >> 12) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | ((value >> 6) & 0x3F)));
+                out.push_back(static_cast<char>(0x80 | (value & 0x3F)));
+            }
+            return out;
         }
     }
     return "&" + entity + ";";
@@ -334,6 +486,41 @@ std::string html_title(const std::string& html) {
         return {};
     }
     return trim(html_to_text(html.substr(open + 1, end - open - 1)));
+}
+
+std::string html_unescape(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] != '&') {
+            out.push_back(text[i]);
+            continue;
+        }
+        std::size_t semi = text.find(';', i + 1);
+        if (semi == std::string::npos || semi - i > 12) {
+            out.push_back('&');
+            continue;
+        }
+        out += decode_entity(text.substr(i + 1, semi - i - 1));
+        i = semi;
+    }
+    return out;
+}
+
+std::string html_escape(const std::string& text) {
+    std::string out;
+    out.reserve(text.size() + 16);
+    for (char c : text) {
+        switch (c) {
+        case '&': out += "&amp;"; break;
+        case '<': out += "&lt;"; break;
+        case '>': out += "&gt;"; break;
+        case '"': out += "&quot;"; break;
+        case '\'': out += "&#39;"; break;
+        default: out.push_back(c); break;
+        }
+    }
+    return out;
 }
 
 std::string json_escape(const std::string& s) {

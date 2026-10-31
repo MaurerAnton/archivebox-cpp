@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(arcbox VERSION 0.1.0 LANGUAGES CXX)
+project(arcbox VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,9 +18,11 @@ add_executable(arcbox
     src/db.cpp
     src/adblock.cpp
     src/capture_http.cpp
+    src/metadata.cpp
     src/warc.cpp
     src/cgroup.cpp
     src/commands.cpp
+    src/web.cpp
 )
 
 target_include_directories(arcbox PRIVATE include)

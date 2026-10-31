@@ -22,10 +22,14 @@ std::string sha256_hex(const std::vector<unsigned char>& data);
 std::string url_host(const std::string& url);
 std::string url_authority(const std::string& url);
 std::string url_path(const std::string& url);
+std::string url_origin(const std::string& url);
 std::string url_canonicalize(const std::string& url);
+std::string url_resolve(const std::string& base, const std::string& relative);
 
 std::string html_title(const std::string& html);
 std::string html_to_text(const std::string& html);
+std::string html_unescape(const std::string& text);
+std::string html_escape(const std::string& text);
 
 std::string json_escape(const std::string& s);
 std::string format_size(int64_t bytes);

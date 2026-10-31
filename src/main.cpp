@@ -13,14 +13,20 @@ namespace {
 
 void usage() {
     std::cout
-        << "ArchiveBox.cpp (arcbox) 0.1.0\n\n"
+        << "ArchiveBox.cpp (arcbox) 0.2.0\n\n"
         << "Usage:\n"
         << "  arcbox [--data DIR] init\n"
         << "  arcbox [--data DIR] add URL [--capture] [--no-block]\n"
         << "  arcbox [--data DIR] capture ID|URL [--no-cgroup] [--no-block]\n"
-        << "  arcbox [--data DIR] list [--limit N]\n"
-        << "  arcbox [--data DIR] search QUERY [--limit N]\n"
+        << "  arcbox [--data DIR] list [--limit N] [--tag TAG]\n"
+        << "  arcbox [--data DIR] search QUERY [--limit N] [--tag TAG]\n"
         << "  arcbox [--data DIR] show ID\n"
+        << "  arcbox [--data DIR] tag ID TAG [TAG...]\n"
+        << "  arcbox [--data DIR] untag ID TAG [TAG...]\n"
+        << "  arcbox [--data DIR] tags\n"
+        << "  arcbox [--data DIR] import FILE|- [--capture] [--no-cgroup] [--no-block]\n"
+        << "  arcbox [--data DIR] export [--limit N] [--tag TAG] [--urls]\n"
+        << "  arcbox [--data DIR] serve [--host HOST] [--port PORT]\n"
         << "  arcbox [--data DIR] daemon [--once] [--no-cgroup] [--no-block]\n"
         << "  arcbox version\n\n"
         << "Environment:\n"
@@ -73,11 +79,20 @@ int main(int argc, char** argv) {
                 std::cerr << "arcbox: --data requires a value\n";
                 return 1;
             }
+            if (value.empty()) {
+                std::cerr << "arcbox: --data must not be empty\n";
+                return 1;
+            }
             cfg.data_dir = value;
             continue;
         }
         if (arcbox::starts_with(args[index], "--data=")) {
-            cfg.data_dir = args[index].substr(7);
+            std::string value = args[index].substr(7);
+            if (value.empty()) {
+                std::cerr << "arcbox: --data must not be empty\n";
+                return 1;
+            }
+            cfg.data_dir = value;
             ++index;
             continue;
         }
@@ -92,7 +107,7 @@ int main(int argc, char** argv) {
     const std::string command = args[index++];
     try {
         if (command == "version") {
-            std::cout << "arcbox 0.1.0\n";
+            std::cout << "arcbox 0.2.0\n";
             return 0;
         }
         if (command == "help" || command == "--help" || command == "-h") {
@@ -175,6 +190,7 @@ int main(int argc, char** argv) {
         }
         if (command == "list") {
             int limit = 20;
+            std::string tag;
             while (index < args.size()) {
                 if (args[index] == "--limit") {
                     std::string value;
@@ -183,17 +199,31 @@ int main(int argc, char** argv) {
                         return 1;
                     }
                     limit = parse_limit(value);
+                } else if (args[index] == "--tag") {
+                    if (!take_value(args, index, tag)) {
+                        std::cerr << "arcbox: --tag requires a value\n";
+                        return 1;
+                    }
+                } else if (args[index] == "--help" || args[index] == "-h") {
+                    usage();
+                    return 0;
                 } else {
                     std::cerr << "arcbox: unknown list option: " << args[index]
                               << "\n";
                     return 1;
                 }
             }
-            return arcbox::cmd_list(cfg, limit);
+            return arcbox::cmd_list(cfg, limit, tag);
         }
         if (command == "search") {
             std::string query;
+            std::string tag;
             int limit = 20;
+            if (index < args.size() &&
+                (args[index] == "--help" || args[index] == "-h")) {
+                usage();
+                return 0;
+            }
             while (index < args.size()) {
                 if (args[index] == "--limit") {
                     std::string value;
@@ -202,6 +232,11 @@ int main(int argc, char** argv) {
                         return 1;
                     }
                     limit = parse_limit(value);
+                } else if (args[index] == "--tag") {
+                    if (!take_value(args, index, tag)) {
+                        std::cerr << "arcbox: --tag requires a value\n";
+                        return 1;
+                    }
                 } else {
                     if (!query.empty()) {
                         query.push_back(' ');
@@ -214,7 +249,7 @@ int main(int argc, char** argv) {
                 std::cerr << "arcbox: search requires a query\n";
                 return 1;
             }
-            return arcbox::cmd_search(cfg, query, limit);
+            return arcbox::cmd_search(cfg, query, limit, tag);
         }
         if (command == "show") {
             if (index + 1 != args.size()) {
@@ -228,7 +263,161 @@ int main(int argc, char** argv) {
                 std::cerr << "arcbox: invalid ID: " << args[index] << "\n";
                 return 1;
             }
+            if (id <= 0) {
+                std::cerr << "arcbox: invalid ID: " << args[index] << "\n";
+                return 1;
+            }
             return arcbox::cmd_show(cfg, id);
+        }
+        if (command == "tag" || command == "untag") {
+            if (index >= args.size()) {
+                usage();
+                return 1;
+            }
+            if (args[index] == "--help" || args[index] == "-h") {
+                usage();
+                return 0;
+            }
+            int64_t id = 0;
+            try {
+                id = std::stoll(args[index]);
+            } catch (const std::exception&) {
+                std::cerr << "arcbox: invalid ID: " << args[index] << "\n";
+                return 1;
+            }
+            if (id <= 0) {
+                std::cerr << "arcbox: invalid ID: " << args[index] << "\n";
+                return 1;
+            }
+            ++index;
+            std::vector<std::string> tags;
+            while (index < args.size()) {
+                tags.push_back(args[index]);
+                ++index;
+            }
+            if (tags.empty()) {
+                std::cerr << "arcbox: " << command
+                          << " requires at least one tag\n";
+                return 1;
+            }
+            return arcbox::cmd_tag(cfg, id, tags, command == "untag");
+        }
+        if (command == "tags") {
+            if (index < args.size() &&
+                (args[index] == "--help" || args[index] == "-h")) {
+                usage();
+                return 0;
+            }
+            if (index != args.size()) {
+                std::cerr << "arcbox: tags accepts no arguments\n";
+                return 1;
+            }
+            return arcbox::cmd_tags(cfg);
+        }
+        if (command == "import") {
+            std::string path;
+            bool capture_now = false;
+            bool use_cgroup = true;
+            bool use_blocklist = true;
+            while (index < args.size()) {
+                const std::string& arg = args[index];
+                if (arg == "--capture") {
+                    capture_now = true;
+                    ++index;
+                } else if (arg == "--no-cgroup") {
+                    use_cgroup = false;
+                    ++index;
+                } else if (arg == "--no-block") {
+                    use_blocklist = false;
+                    ++index;
+                } else if (arg == "--help" || arg == "-h") {
+                    usage();
+                    return 0;
+                } else if (arg.rfind("--", 0) == 0) {
+                    std::cerr << "arcbox: unknown import option: " << arg
+                              << "\n";
+                    return 1;
+                } else if (path.empty()) {
+                    path = arg;
+                    ++index;
+                } else {
+                    std::cerr << "arcbox: import accepts one file path\n";
+                    return 1;
+                }
+            }
+            if (path.empty()) {
+                std::cerr << "arcbox: import requires a file path or -\n";
+                return 1;
+            }
+            return arcbox::cmd_import(cfg, path, capture_now, use_cgroup,
+                                      use_blocklist);
+        }
+        if (command == "export") {
+            int limit = 1000;
+            std::string tag;
+            bool urls_only = false;
+            while (index < args.size()) {
+                if (args[index] == "--limit") {
+                    std::string value;
+                    if (!take_value(args, index, value)) {
+                        std::cerr << "arcbox: --limit requires a value\n";
+                        return 1;
+                    }
+                    limit = parse_limit(value);
+                } else if (args[index] == "--tag") {
+                    if (!take_value(args, index, tag)) {
+                        std::cerr << "arcbox: --tag requires a value\n";
+                        return 1;
+                    }
+                } else if (args[index] == "--urls") {
+                    urls_only = true;
+                    ++index;
+                } else if (args[index] == "--help" || args[index] == "-h") {
+                    usage();
+                    return 0;
+                } else {
+                    std::cerr << "arcbox: unknown export option: "
+                              << args[index] << "\n";
+                    return 1;
+                }
+            }
+            return arcbox::cmd_export(cfg, limit, tag, urls_only);
+        }
+        if (command == "serve") {
+            std::string host = "127.0.0.1";
+            int port = 8080;
+            while (index < args.size()) {
+                if (args[index] == "--host") {
+                    if (!take_value(args, index, host)) {
+                        std::cerr << "arcbox: --host requires a value\n";
+                        return 1;
+                    }
+                } else if (args[index] == "--port") {
+                    std::string value;
+                    if (!take_value(args, index, value)) {
+                        std::cerr << "arcbox: --port requires a value\n";
+                        return 1;
+                    }
+                    try {
+                        port = std::stoi(value);
+                    } catch (const std::exception&) {
+                        std::cerr << "arcbox: invalid port: " << value << "\n";
+                        return 1;
+                    }
+                    if (port <= 0 || port > 65535) {
+                        std::cerr << "arcbox: invalid port: " << value << "\n";
+                        return 1;
+                    }
+                } else if (args[index] == "--help" || args[index] == "-h") {
+                    usage();
+                    return 0;
+                } else {
+                    std::cerr << "arcbox: unknown serve option: "
+                              << args[index] << "\n";
+                    return 1;
+                }
+            }
+            return arcbox::cmd_serve(cfg, host, port);
         }
         if (command == "daemon") {
             bool once = false;
@@ -245,6 +434,9 @@ int main(int argc, char** argv) {
                 } else if (arg == "--no-block") {
                     use_blocklist = false;
                     ++index;
+                } else if (arg == "--help" || arg == "-h") {
+                    usage();
+                    return 0;
                 } else {
                     std::cerr << "arcbox: unknown daemon option: " << arg
                               << "\n";
