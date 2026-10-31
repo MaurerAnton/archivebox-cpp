@@ -19,6 +19,12 @@ struct Config {
     long throttle_sleep_seconds = 15;
     long pause_sleep_seconds = 60;
 
+    // Queue retry policy. A failed capture is retried with exponential
+    // backoff instead of being dropped on the first error.
+    int max_attempts = 5;
+    long retry_backoff_seconds = 30;
+    long retry_backoff_max_seconds = 3600;
+
     bool use_cgroup = true;
     std::string slice;
     std::string memory_max = "1800M";

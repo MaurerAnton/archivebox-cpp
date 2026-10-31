@@ -270,6 +270,48 @@ MISSING_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' "$WEB_BASE/snapshot/99
 POST_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$WEB_BASE/")"
 [[ "$POST_STATUS" == "405" ]] || fail "POST / returned $POST_STATUS"
 
+# --- queue priority ---
+PRIO_DATA="$DATA/priority"
+echo "Low priority page" >"$SITE/low-priority.html"
+"$BIN" --data "$PRIO_DATA" init >/dev/null
+"$BIN" --data "$PRIO_DATA" add "http://127.0.0.1:$PORT/low-priority.html" \
+    >/dev/null
+"$BIN" --data "$PRIO_DATA" add "http://127.0.0.1:$PORT/" --priority 10 \
+    >/dev/null
+PRIO_OUT="$("$BIN" --data "$PRIO_DATA" daemon --once --no-cgroup 2>/dev/null)"
+FIRST_ID="$(printf '%s\n' "$PRIO_OUT" | grep -o '^#[0-9]*' | head -1)"
+[[ "$FIRST_ID" == "#2" ]] \
+    || fail "expected the high-priority snapshot first, got '${FIRST_ID}'"
+"$BIN" --data "$PRIO_DATA" show 2 | grep -Fq "priority:    10" \
+    || fail "priority should be reported by show"
+
+# --- retry with backoff ---
+RETRY_DATA="$DATA/retry"
+"$BIN" --data "$RETRY_DATA" init >/dev/null
+"$BIN" --data "$RETRY_DATA" add "http://127.0.0.1:9/dead" >/dev/null
+RETRY_OUT="$(ARCBOX_MAX_ATTEMPTS=3 ARCBOX_RETRY_BACKOFF=600 \
+    "$BIN" --data "$RETRY_DATA" daemon --once --no-cgroup 2>&1)"
+assert_contains "$RETRY_OUT" "attempt 1/3 failed" "failed attempt is counted"
+assert_contains "$RETRY_OUT" "retrying later" "failure is requeued, not dropped"
+"$BIN" --data "$RETRY_DATA" list | grep -Fq "queued" \
+    || fail "requeued snapshot should be queued again"
+"$BIN" --data "$RETRY_DATA" show 1 | grep -Fq "attempts:    1" \
+    || fail "attempt counter should be reported"
+
+# Exhausting the attempts leaves the snapshot failed, and `retry` revives it.
+GIVEUP_DATA="$DATA/giveup"
+"$BIN" --data "$GIVEUP_DATA" init >/dev/null
+"$BIN" --data "$GIVEUP_DATA" add "http://127.0.0.1:9/dead" >/dev/null
+GIVEUP_OUT="$(ARCBOX_MAX_ATTEMPTS=1 \
+    "$BIN" --data "$GIVEUP_DATA" daemon --once --no-cgroup 2>&1)"
+assert_contains "$GIVEUP_OUT" "gave up after 1 attempts" "no attempts left"
+"$BIN" --data "$GIVEUP_DATA" list | grep -Fq "failed" \
+    || fail "exhausted snapshot should stay failed"
+RETRY_BACK="$("$BIN" --data "$GIVEUP_DATA" retry 1)"
+assert_contains "$RETRY_BACK" "requeued 1 snapshot(s)" "retry requeues work"
+"$BIN" --data "$GIVEUP_DATA" list | grep -Fq "queued" \
+    || fail "retry should put the snapshot back in the queue"
+
 # --- PSI-aware admission guard ---
 ADM_DATA="$DATA/admission"
 "$BIN" --data "$ADM_DATA" init >/dev/null

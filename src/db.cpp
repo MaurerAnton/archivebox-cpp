@@ -36,6 +36,9 @@ static const std::vector<std::string> kSnapshotColumnNames = {
     "headers_path",
     "metadata_path",
     "error",
+    "priority",
+    "attempts",
+    "next_attempt_at",
 };
 
 static std::string snapshot_columns(const std::string& prefix = {}) {
@@ -81,6 +84,9 @@ static Snapshot read_snapshot(sqlite3_stmt* stmt) {
     s.headers_path = column_text(stmt, 21);
     s.metadata_path = column_text(stmt, 22);
     s.error = column_text(stmt, 23);
+    s.priority = sqlite3_column_int(stmt, 24);
+    s.attempts = sqlite3_column_int(stmt, 25);
+    s.next_attempt_at = sqlite3_column_int64(stmt, 26);
     return s;
 }
 
@@ -224,6 +230,10 @@ void Db::migrate() {
         {"favicon_url", "TEXT"},
         {"headers_path", "TEXT"},
         {"metadata_path", "TEXT"},
+        // Queue scheduling columns, added for v0.4 retry support.
+        {"priority", "INTEGER NOT NULL DEFAULT 0"},
+        {"attempts", "INTEGER NOT NULL DEFAULT 0"},
+        {"next_attempt_at", "INTEGER"},
     };
     for (const auto& column : columns) {
         if (!has_column("snapshots", column.name)) {
@@ -241,7 +251,7 @@ void Db::recover_stale() {
     )");
 }
 
-int64_t Db::enqueue(const std::string& url) {
+int64_t Db::enqueue(const std::string& url, int priority) {
     exec("BEGIN IMMEDIATE");
     int64_t snapshot_id = 0;
     try {
@@ -269,12 +279,13 @@ int64_t Db::enqueue(const std::string& url) {
 
         stmt = prepare(
             db_,
-            "INSERT INTO snapshots(url_id,url,canonical_url,status,created_at) "
-            "VALUES(?,?,?,'queued',?)");
+            "INSERT INTO snapshots(url_id,url,canonical_url,status,created_at,"
+            "priority) VALUES(?,?,?,'queued',?,?)");
         sqlite3_bind_int64(stmt, 1, url_id);
         sqlite3_bind_text(stmt, 2, url.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 3, url.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 4, now.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int(stmt, 5, priority);
         rc = sqlite3_step(stmt);
         if (rc != SQLITE_DONE) {
             sqlite3_finalize(stmt);
@@ -295,9 +306,14 @@ int64_t Db::enqueue(const std::string& url) {
 }
 
 std::optional<Snapshot> Db::next_queued() {
+    // Higher priority first, then oldest first. Snapshots with a backoff delay
+    // stay invisible until their retry time passes.
     sqlite3_stmt* stmt = prepare(
         db_, "SELECT " + snapshot_columns() +
-                 " FROM snapshots WHERE status='queued' ORDER BY id LIMIT 1");
+                 " FROM snapshots WHERE status='queued'"
+                 " AND (next_attempt_at IS NULL"
+                 "      OR next_attempt_at <= strftime('%s','now'))"
+                 " ORDER BY priority DESC, id ASC LIMIT 1");
     int rc = sqlite3_step(stmt);
     std::optional<Snapshot> result;
     if (rc == SQLITE_ROW) {
@@ -450,6 +466,81 @@ void Db::finish(int64_t id, const CaptureUpdate& update) {
         }
         throw;
     }
+}
+
+bool Db::schedule_retry(int64_t id,
+                        const std::string& error,
+                        int max_attempts,
+                        long backoff_seconds,
+                        long backoff_max_seconds) {
+    sqlite3_stmt* stmt =
+        prepare(db_, "SELECT attempts FROM snapshots WHERE id=?");
+    sqlite3_bind_int64(stmt, 1, id);
+    int attempts = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        attempts = sqlite3_column_int(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    attempts += 1;
+
+    const bool requeue = attempts < max_attempts;
+    long delay = 0;
+    if (requeue) {
+        delay = backoff_seconds;
+        for (int i = 1; i < attempts; ++i) {
+            delay *= 2;
+            if (delay >= backoff_max_seconds) {
+                delay = backoff_max_seconds;
+                break;
+            }
+        }
+    }
+
+    if (requeue) {
+        stmt = prepare(db_,
+                       "UPDATE snapshots SET status='queued', attempts=?,"
+                       " next_attempt_at=strftime('%s','now') + ?, error=?"
+                       " WHERE id=?");
+        sqlite3_bind_int(stmt, 1, attempts);
+        sqlite3_bind_int64(stmt, 2, static_cast<int64_t>(delay));
+        sqlite3_bind_text(stmt, 3, error.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 4, id);
+    } else {
+        stmt = prepare(db_,
+                       "UPDATE snapshots SET status='failed', attempts=?,"
+                       " next_attempt_at=NULL, error=? WHERE id=?");
+        sqlite3_bind_int(stmt, 1, attempts);
+        sqlite3_bind_text(stmt, 2, error.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 3, id);
+    }
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        throw std::runtime_error(std::string("schedule retry failed: ") +
+                                 sqlite3_errmsg(db_));
+    }
+    return requeue;
+}
+
+int Db::reset_retry(bool all, int64_t id) {
+    sqlite3_stmt* stmt;
+    if (all) {
+        stmt = prepare(db_,
+                       "UPDATE snapshots SET status='queued', attempts=0,"
+                       " next_attempt_at=NULL, error='' WHERE status='failed'");
+    } else {
+        stmt = prepare(db_,
+                       "UPDATE snapshots SET status='queued', attempts=0,"
+                       " next_attempt_at=NULL, error='' WHERE id=?");
+        sqlite3_bind_int64(stmt, 1, id);
+    }
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        throw std::runtime_error(std::string("reset retry failed: ") +
+                                 sqlite3_errmsg(db_));
+    }
+    return sqlite3_changes(db_);
 }
 
 std::vector<Snapshot> Db::list(int limit, const std::string& tag) {

@@ -49,6 +49,8 @@ Target machine: 8 GB RAM, Arch Linux, systemd, cgroups v2.
 - Admission guard before every daemon capture: reads `/proc/meminfo` and
   `/proc/pressure/memory`, throttles when PSI pressure is high, and pauses the
   queue when free memory falls below ~1.5 GB.
+- Queue scheduling: `--priority N` decides what the daemon drains first, and a
+  failed capture is retried with exponential backoff instead of being dropped.
 
 ## Not implemented yet
 
@@ -245,7 +247,7 @@ On daemon startup, rows left in `running` are recovered as `queued`.
 
 ```text
 arcbox init
-arcbox add URL [--capture] [--no-block]
+arcbox add URL [--capture] [--priority N] [--no-block]
 arcbox capture ID|URL [--no-cgroup] [--no-block]
 arcbox list [--limit N] [--tag TAG]
 arcbox search QUERY [--limit N] [--tag TAG]
@@ -257,11 +259,19 @@ arcbox import FILE|- [--capture] [--no-cgroup] [--no-block]
 arcbox export [--limit N] [--tag TAG] [--urls]
 arcbox serve [--host HOST] [--port PORT]
 arcbox daemon [--once] [--no-cgroup] [--no-block]
+arcbox retry ID|all
 arcbox version
 ```
 
 `--no-block` bypasses the host blocklist for an explicit capture. Tags are
 trimmed and lowercased; commas and control characters are rejected.
+
+The daemon drains the queue highest priority first, oldest first. A failed
+capture is not dropped: it is counted and requeued with exponential backoff
+(`ARCBOX_MAX_ATTEMPTS`, default 5; `ARCBOX_RETRY_BACKOFF`, default 30 s, doubling
+up to `ARCBOX_RETRY_BACKOFF_MAX`, default 1 h). A snapshot that used up all its
+attempts stays `failed` until `arcbox retry` puts it back. A `blocked` decision
+is policy, not an error, and is never retried.
 
 ## Development
 

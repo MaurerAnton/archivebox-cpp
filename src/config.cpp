@@ -56,6 +56,13 @@ Config Config::load() {
     cfg.pause_sleep_seconds =
         parse_long("ARCBOX_PAUSE_SLEEP", cfg.pause_sleep_seconds);
 
+    cfg.max_attempts =
+        static_cast<int>(parse_long("ARCBOX_MAX_ATTEMPTS", cfg.max_attempts));
+    cfg.retry_backoff_seconds =
+        parse_long("ARCBOX_RETRY_BACKOFF", cfg.retry_backoff_seconds);
+    cfg.retry_backoff_max_seconds = parse_long("ARCBOX_RETRY_BACKOFF_MAX",
+                                               cfg.retry_backoff_max_seconds);
+
     cfg.use_cgroup = getenv_or("ARCBOX_NO_CGROUP", "") != "1";
     cfg.slice = getenv_or("ARCBOX_SLICE", "");
     cfg.memory_max = getenv_or("ARCBOX_MEMORY_MAX", cfg.memory_max);

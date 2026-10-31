@@ -35,8 +35,8 @@ The admission guard already shipped early, as part of v0.2:
 
 - [x] Read `/proc/meminfo` and `/proc/pressure/memory`.
 - [x] Pause queue when `MemAvailable < 1.5G` or PSI `some avg10 > 10`.
-- [ ] Grow the guard into full adaptive scheduling: queue priority and
-      retry/backoff instead of only pause/throttle.
+- [x] Retry failed captures with exponential backoff and drain by priority
+      instead of first-come-first-served; attempts survive restarts.
 - [ ] Verify behavior on 8 GB with zram.
 
 ## v0.5 — ad blocking and replay

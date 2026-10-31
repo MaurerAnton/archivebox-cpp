@@ -16,7 +16,7 @@ void usage() {
         << "ArchiveBox.cpp (arcbox) 0.2.0\n\n"
         << "Usage:\n"
         << "  arcbox [--data DIR] init\n"
-        << "  arcbox [--data DIR] add URL [--capture] [--no-block]\n"
+        << "  arcbox [--data DIR] add URL [--capture] [--priority N] [--no-block]\n"
         << "  arcbox [--data DIR] capture ID|URL [--no-cgroup] [--no-block]\n"
         << "  arcbox [--data DIR] list [--limit N] [--tag TAG]\n"
         << "  arcbox [--data DIR] search QUERY [--limit N] [--tag TAG]\n"
@@ -28,13 +28,16 @@ void usage() {
         << "  arcbox [--data DIR] export [--limit N] [--tag TAG] [--urls]\n"
         << "  arcbox [--data DIR] serve [--host HOST] [--port PORT]\n"
         << "  arcbox [--data DIR] daemon [--once] [--no-cgroup] [--no-block]\n"
+        << "  arcbox [--data DIR] retry ID|all\n"
         << "  arcbox version\n\n"
         << "Environment:\n"
         << "  ARCBOX_DATA            data directory (default ~/.local/share/arcbox)\n"
         << "  ARCBOX_NO_CGROUP=1     disable systemd-run memory wrapping\n"
         << "  ARCBOX_MEMORY_MAX      cgroup hard limit (default 1800M)\n"
         << "  ARCBOX_MEMORY_HIGH     cgroup throttle threshold (default 1200M)\n"
-        << "  ARCBOX_MEMORY_SWAP_MAX cgroup swap limit (default 512M)\n";
+        << "  ARCBOX_MEMORY_SWAP_MAX cgroup swap limit (default 512M)\n"
+        << "  ARCBOX_MAX_ATTEMPTS    attempts before giving up (default 5)\n"
+        << "  ARCBOX_RETRY_BACKOFF   first retry delay in seconds (default 30)\n";
 }
 
 bool take_value(const std::vector<std::string>& args,
@@ -121,6 +124,7 @@ int main(int argc, char** argv) {
             std::string url;
             bool capture_now = false;
             bool use_blocklist = true;
+            int priority = 0;
             while (index < args.size()) {
                 const std::string& arg = args[index];
                 if (arg == "--capture") {
@@ -129,6 +133,19 @@ int main(int argc, char** argv) {
                 } else if (arg == "--no-block") {
                     use_blocklist = false;
                     ++index;
+                } else if (arg == "--priority") {
+                    std::string value;
+                    if (!take_value(args, index, value)) {
+                        std::cerr << "arcbox: --priority requires a value\n";
+                        return 1;
+                    }
+                    try {
+                        priority = std::stoi(value);
+                    } catch (const std::exception&) {
+                        std::cerr << "arcbox: invalid priority: " << value
+                                  << "\n";
+                        return 1;
+                    }
                 } else if (arg == "--help" || arg == "-h") {
                     usage();
                     return 0;
@@ -147,7 +164,8 @@ int main(int argc, char** argv) {
                 std::cerr << "arcbox: add requires a URL\n";
                 return 1;
             }
-            return arcbox::cmd_add(cfg, url, capture_now, use_blocklist);
+            return arcbox::cmd_add(cfg, url, capture_now, use_blocklist,
+                                   priority);
         }
         if (command == "capture") {
             std::string target;
@@ -444,6 +462,27 @@ int main(int argc, char** argv) {
                 }
             }
             return arcbox::cmd_daemon(cfg, once, use_cgroup, use_blocklist);
+        }
+        if (command == "retry") {
+            std::string target;
+            while (index < args.size()) {
+                const std::string& arg = args[index];
+                if (arg == "--help" || arg == "-h") {
+                    usage();
+                    return 0;
+                } else if (target.empty()) {
+                    target = arg;
+                    ++index;
+                } else {
+                    std::cerr << "arcbox: retry accepts one ID or 'all'\n";
+                    return 1;
+                }
+            }
+            if (target.empty()) {
+                std::cerr << "arcbox: retry requires a snapshot ID or 'all'\n";
+                return 1;
+            }
+            return arcbox::cmd_retry(cfg, target);
         }
         if (command == "__worker") {
             int64_t id = 0;

@@ -38,6 +38,10 @@ struct Snapshot {
     std::string headers_path;
     std::string metadata_path;
     std::string error;
+    int priority = 0;
+    int attempts = 0;
+    // Unix seconds when the snapshot becomes eligible again; 0 means "due now".
+    int64_t next_attempt_at = 0;
 };
 
 struct CaptureUpdate {
@@ -74,11 +78,21 @@ public:
 
     void migrate();
     void recover_stale();
-    int64_t enqueue(const std::string& url);
+    int64_t enqueue(const std::string& url, int priority = 0);
     std::optional<Snapshot> next_queued();
     std::optional<Snapshot> get(int64_t id);
     bool mark_running(int64_t id);
     void finish(int64_t id, const CaptureUpdate& update);
+    // Counts one more attempt: either requeues the snapshot with an
+    // exponential delay, or gives up and marks it failed. Returns true when
+    // the snapshot was requeued.
+    bool schedule_retry(int64_t id,
+                        const std::string& error,
+                        int max_attempts,
+                        long backoff_seconds,
+                        long backoff_max_seconds);
+    // Clears the attempt counter so failed work can be picked up again.
+    int reset_retry(bool all, int64_t id);
     std::vector<Snapshot> list(int limit, const std::string& tag = {});
     std::vector<Snapshot> search(const std::string& query,
                                  int limit,

@@ -261,7 +261,8 @@ int cmd_init(Config& cfg) {
 int cmd_add(Config& cfg,
             const std::string& url,
             bool capture_now,
-            bool use_blocklist) {
+            bool use_blocklist,
+            int priority) {
     cfg.ensure_dirs();
     Db db(cfg.db_path());
     db.migrate();
@@ -275,8 +276,12 @@ int cmd_add(Config& cfg,
         return fail("URL has no host: " + canonical);
     }
 
-    int64_t id = db.enqueue(canonical);
-    std::cout << "queued #" << id << " " << canonical << "\n";
+    int64_t id = db.enqueue(canonical, priority);
+    std::cout << "queued #" << id << " " << canonical;
+    if (priority != 0) {
+        std::cout << " (priority " << priority << ")";
+    }
+    std::cout << "\n";
     if (capture_now) {
         return do_capture(cfg, db, id, true, use_blocklist);
     }
@@ -380,8 +385,14 @@ int cmd_show(Config& cfg, int64_t id) {
               << "url:         " << snapshot->url << "\n"
               << "canonical:   " << snapshot->canonical_url << "\n"
               << "status:      " << snapshot->status << "\n"
-              << "http_status: " << snapshot->http_status << "\n"
-              << "content:     " << snapshot->content_type << "\n"
+              << "http_status: " << snapshot->http_status << "\n";
+    if (snapshot->priority != 0) {
+        std::cout << "priority:    " << snapshot->priority << "\n";
+    }
+    if (snapshot->attempts > 0) {
+        std::cout << "attempts:    " << snapshot->attempts << "\n";
+    }
+    std::cout << "content:     " << snapshot->content_type << "\n"
               << "title:       " << snapshot->title << "\n";
     if (!snapshot->description.empty()) {
         std::cout << "description: " << snapshot->description << "\n";
@@ -670,7 +681,51 @@ int cmd_daemon(Config& cfg,
         }
 
         do_capture(cfg, db, snapshot->id, use_cgroup, use_blocklist);
+
+        // A transient failure is retried with exponential backoff; a snapshot
+        // that exhausted its attempts is left failed for `arcbox retry`.
+        // "blocked" is a policy decision, not a failure, so it never retries.
+        auto finished = db.get(snapshot->id);
+        if (finished && finished->status == "failed") {
+            bool requeued = db.schedule_retry(
+                finished->id, finished->error, cfg.max_attempts,
+                cfg.retry_backoff_seconds, cfg.retry_backoff_max_seconds);
+            int attempt = finished->attempts + 1;
+            if (requeued) {
+                std::cout << "arcbox: #" << finished->id << " attempt "
+                          << attempt << "/" << cfg.max_attempts
+                          << " failed (" << finished->error
+                          << "); retrying later\n";
+            } else {
+                std::cout << "arcbox: #" << finished->id
+                          << " gave up after " << attempt << " attempts ("
+                          << finished->error << ")\n";
+            }
+            std::cout.flush();
+        }
     }
+    return 0;
+}
+
+int cmd_retry(Config& cfg, const std::string& target) {
+    cfg.ensure_dirs();
+    Db db(cfg.db_path());
+    db.migrate();
+
+    bool all = target == "all" || target == "--all";
+    int64_t id = 0;
+    if (!all) {
+        if (!is_numeric(target)) {
+            return fail("retry expects a snapshot ID or 'all'");
+        }
+        id = std::stoll(target);
+        if (!db.get(id)) {
+            return fail("snapshot not found: " + target);
+        }
+    }
+
+    int changed = db.reset_retry(all, id);
+    std::cout << "requeued " << changed << " snapshot(s)\n";
     return 0;
 }
 
