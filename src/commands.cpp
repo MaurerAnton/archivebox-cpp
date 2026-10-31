@@ -169,13 +169,15 @@ static int do_capture(Config& cfg,
         int rc = run_in_cgroup(cfg, argv, error);
         if (rc != 0) {
             auto snapshot = db.get(id);
-            if (snapshot && snapshot->status == "queued") {
+            if (snapshot && (snapshot->status == "queued" ||
+                             snapshot->status == "running")) {
                 CaptureUpdate failed;
                 failed.status = "failed";
                 failed.error = "cgroup runner: " + error;
                 db.finish(id, failed);
+                std::cerr << "arcbox: cgroup capture failed: " << error
+                          << "\n";
             }
-            std::cerr << "arcbox: cgroup capture failed: " << error << "\n";
             return rc;
         }
         return 0;
