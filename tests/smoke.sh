@@ -312,6 +312,46 @@ assert_contains "$RETRY_BACK" "requeued 1 snapshot(s)" "retry requeues work"
 "$BIN" --data "$GIVEUP_DATA" list | grep -Fq "queued" \
     || fail "retry should put the snapshot back in the queue"
 
+# --- headless browser rendering (skipped when no browser is installed) ---
+BROWSER=""
+for candidate in \
+    "${ARCBOX_BROWSER:-}" \
+    "$HOME/.local/share/arcbox-browser/chrome-headless-shell-linux-arm64/chrome-headless-shell" \
+    "$(command -v chromium 2>/dev/null)" \
+    "$(command -v google-chrome-stable 2>/dev/null)"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        BROWSER="$candidate"
+        break
+    fi
+done
+
+if [ -n "$BROWSER" ]; then
+    RENDER_DATA="$DATA/render"
+    "$BIN" --data "$RENDER_DATA" init >/dev/null
+    "$BIN" --data "$RENDER_DATA" add "http://127.0.0.1:$PORT/" >/dev/null
+    # The admission guard has its own test below; here the floor is lowered so
+    # the render path itself is exercised even on a busy machine.
+    ARCBOX_RENDER=1 ARCBOX_RENDER_PDF=1 ARCBOX_MIN_MEM_AVAILABLE_KB=300000 \
+        ARCBOX_BROWSER="$BROWSER" \
+        "$BIN" --data "$RENDER_DATA" daemon --once --no-cgroup >/dev/null 2>&1
+    RENDER_SHOW="$("$BIN" --data "$RENDER_DATA" show 1)"
+    assert_contains "$RENDER_SHOW" "screenshot:" "browser screenshot is stored"
+    assert_contains "$RENDER_SHOW" "rendered:" "rendered DOM is stored"
+    SHOT="$RENDER_DATA/snapshots/1/screenshot.png"
+    DOM="$RENDER_DATA/snapshots/1/rendered.html"
+    [ -s "$SHOT" ] || fail "screenshot is empty"
+    [ -s "$DOM" ] || fail "rendered DOM is empty"
+    python3 - "$SHOT" <<'PY'
+import sys
+head = open(sys.argv[1], 'rb').read(8)
+sys.exit(0 if head == b'\x89PNG\r\n\x1a\n' else 1)
+PY
+    [ $? -eq 0 ] || fail "screenshot is not a PNG"
+    echo "browser rendering checked with $BROWSER"
+else
+    echo "no headless browser found; render checks skipped"
+fi
+
 # --- PSI-aware admission guard ---
 ADM_DATA="$DATA/admission"
 "$BIN" --data "$ADM_DATA" init >/dev/null

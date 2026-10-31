@@ -22,6 +22,7 @@ add_executable(arcbox
     src/warc.cpp
     src/cgroup.cpp
     src/memory.cpp
+    src/browser.cpp
     src/commands.cpp
     src/web.cpp
 )

@@ -12,9 +12,10 @@ This is an independent implementation inspired by
 of its Django codebase. ArchiveBox is MIT-licensed; this project is MIT-licensed
 as well. It is not affiliated with the ArchiveBox project.
 
-**Status:** v0.2 alpha. HTTP/WARC capture, metadata, tags, URL import/export,
-and a read-only local web browser work. Chromium rendering, screenshots, PDF
-capture, WACZ packaging, and replay are not implemented yet.
+**Status:** v0.3 alpha. HTTP/WARC capture, metadata, tags, URL import/export,
+a read-only local web browser, queue priorities with retry, and opt-in headless
+Chromium rendering (rendered DOM, screenshot, PDF) work. WACZ packaging,
+faithful replay, and element-level ad blocking are not implemented yet.
 
 ## Why a C++ core?
 
@@ -49,16 +50,21 @@ Target machine: 8 GB RAM, Arch Linux, systemd, cgroups v2.
 - Admission guard before every daemon capture: reads `/proc/meminfo` and
   `/proc/pressure/memory`, throttles when PSI pressure is high, and pauses the
   queue when free memory falls below ~1.5 GB.
+- Headless Chromium rendering of the DOM, a screenshot and an optional PDF, opt-in
+  and itself guarded, so JavaScript pages are archived without risking the host.
 - Queue scheduling: `--priority N` decides what the daemon drains first, and a
   failed capture is retried with exponential backoff instead of being dropped.
 
 ## Not implemented yet
 
-- Chromium/CDP rendering and JavaScript-heavy pages.
-- PDF, screenshot, and `monolith` single-file capture.
+- Chromium/CDP rendering of JavaScript-heavy pages driven over WebSocket; today
+  each artifact is produced by its own short-lived Chrome invocation via the
+  command line, which is enough for the DOM, screenshot and PDF but cannot run
+  scripts that need interaction.
 - Element-level ad blocking (uBlock-style filter lists).
 - WACZ packaging, content-addressed deduplication, and faithful replay.
-- Adaptive scheduling (queue priority, recrawl policies, retention rules).
+- Adaptive scheduling beyond the current admission guard (size-aware admission,
+  per-host pacing, recrawl policies, retention rules).
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the intended phases.
 
@@ -184,6 +190,29 @@ ARCBOX_PAUSE_SLEEP=60 \
 arcbox daemon
 ```
 
+### Headless rendering
+
+Rendering is **off by default** (`ARCBOX_RENDER=1` enables it): it is the only
+capture step that can cost hundreds of megabytes, so it stays opt-in, applies
+only to successful HTML captures, and re-runs the admission guard right before
+launching Chromium — when memory is tight the page is still archived and the
+render is simply skipped with a note on stderr.
+
+Each artifact comes from its own disposable browser process with a wall-clock
+timeout and a size ceiling, so a page that hangs or explodes costs one process,
+not the daemon:
+
+```bash
+ARCBOX_RENDER=1 \
+ARCBOX_RENDER_PDF=1 \
+ARCBOX_BROWSER=/path/to/chrome-headless-shell \
+ARCBOX_RENDER_TIMEOUT=60 \
+arcbox daemon
+```
+
+`ARCBOX_BROWSER` selects the binary; otherwise `chrome-headless-shell`,
+`chromium`, or `google-chrome-stable` is used if found on `PATH`. No root
+access is needed: an unpacked Chrome for Testing build works as-is.
 Below the memory floor the queue pauses; above the PSI limit it throttles.
 Both checks fail open: on a kernel without `CONFIG_PSI` only the memory floor
 applies, and an unreadable `/proc/meminfo` cannot stall the queue forever. A

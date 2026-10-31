@@ -36,6 +36,9 @@ void usage() {
         << "  ARCBOX_MEMORY_MAX      cgroup hard limit (default 1800M)\n"
         << "  ARCBOX_MEMORY_HIGH     cgroup throttle threshold (default 1200M)\n"
         << "  ARCBOX_MEMORY_SWAP_MAX cgroup swap limit (default 512M)\n"
+        << "  ARCBOX_RENDER          1 enables headless rendering\n"
+        << "  ARCBOX_RENDER_PDF      1 also prints the page to PDF\n"
+        << "  ARCBOX_BROWSER         path to a headless Chromium\n"
         << "  ARCBOX_MAX_ATTEMPTS    attempts before giving up (default 5)\n"
         << "  ARCBOX_RETRY_BACKOFF   first retry delay in seconds (default 30)\n";
 }

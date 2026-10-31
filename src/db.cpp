@@ -39,6 +39,9 @@ static const std::vector<std::string> kSnapshotColumnNames = {
     "priority",
     "attempts",
     "next_attempt_at",
+    "rendered_html_path",
+    "screenshot_path",
+    "pdf_path",
 };
 
 static std::string snapshot_columns(const std::string& prefix = {}) {
@@ -87,6 +90,9 @@ static Snapshot read_snapshot(sqlite3_stmt* stmt) {
     s.priority = sqlite3_column_int(stmt, 24);
     s.attempts = sqlite3_column_int(stmt, 25);
     s.next_attempt_at = sqlite3_column_int64(stmt, 26);
+    s.rendered_html_path = column_text(stmt, 27);
+    s.screenshot_path = column_text(stmt, 28);
+    s.pdf_path = column_text(stmt, 29);
     return s;
 }
 
@@ -234,6 +240,10 @@ void Db::migrate() {
         {"priority", "INTEGER NOT NULL DEFAULT 0"},
         {"attempts", "INTEGER NOT NULL DEFAULT 0"},
         {"next_attempt_at", "INTEGER"},
+        // Headless rendering artifacts, added with v0.3 browser capture.
+        {"rendered_html_path", "TEXT"},
+        {"screenshot_path", "TEXT"},
+        {"pdf_path", "TEXT"},
     };
     for (const auto& column : columns) {
         if (!has_column("snapshots", column.name)) {
@@ -361,7 +371,8 @@ void Db::finish(int64_t id, const CaptureUpdate& update) {
             "size_bytes=?, warc_path=?, body_path=?, text_path=?, "
             "headers_path=?, metadata_path=?, "
             "canonical_url=COALESCE(NULLIF(?, ''), canonical_url), "
-            "error=? WHERE id=?");
+            "error=?, rendered_html_path=?, screenshot_path=?, pdf_path=? "
+            "WHERE id=?");
         sqlite3_bind_text(stmt, 1, update.status.c_str(), -1, SQLITE_TRANSIENT);
         std::string now = now_iso8601();
         sqlite3_bind_text(stmt, 2, now.c_str(), -1, SQLITE_TRANSIENT);
@@ -395,7 +406,13 @@ void Db::finish(int64_t id, const CaptureUpdate& update) {
         sqlite3_bind_text(stmt, 19, update.canonical_url.c_str(), -1,
                           SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 20, update.error.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int64(stmt, 21, id);
+        sqlite3_bind_text(stmt, 21, update.rendered_html_path.c_str(), -1,
+                          SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 22, update.screenshot_path.c_str(), -1,
+                          SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 23, update.pdf_path.c_str(), -1,
+                          SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 24, id);
         int rc = sqlite3_step(stmt);
         sqlite3_finalize(stmt);
         if (rc != SQLITE_DONE) {

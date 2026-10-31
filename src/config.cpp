@@ -65,6 +65,18 @@ Config Config::load() {
 
     cfg.use_cgroup = getenv_or("ARCBOX_NO_CGROUP", "") != "1";
     cfg.slice = getenv_or("ARCBOX_SLICE", "");
+
+    cfg.render_enabled = getenv_or("ARCBOX_RENDER", "") == "1";
+    cfg.render_pdf = getenv_or("ARCBOX_RENDER_PDF", "") == "1";
+    cfg.browser_path = getenv_or("ARCBOX_BROWSER", "");
+    cfg.render_timeout_seconds =
+        parse_long("ARCBOX_RENDER_TIMEOUT", cfg.render_timeout_seconds);
+    cfg.render_virtual_time_ms =
+        parse_long("ARCBOX_RENDER_BUDGET_MS", cfg.render_virtual_time_ms);
+    cfg.render_width =
+        static_cast<int>(parse_long("ARCBOX_RENDER_WIDTH", cfg.render_width));
+    cfg.render_height =
+        static_cast<int>(parse_long("ARCBOX_RENDER_HEIGHT", cfg.render_height));
     cfg.memory_max = getenv_or("ARCBOX_MEMORY_MAX", cfg.memory_max);
     cfg.memory_high = getenv_or("ARCBOX_MEMORY_HIGH", cfg.memory_high);
     cfg.memory_swap_max =

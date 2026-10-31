@@ -33,6 +33,18 @@ struct Config {
     std::string cpu_quota = "200%";
     int tasks_max = 300;
 
+    // Headless browser rendering (v0.3). Off by default: this is the one
+    // capture step that can eat hundreds of megabytes, so it is opt-in and
+    // always runs behind the same admission guard as everything else.
+    bool render_enabled = false;
+    bool render_pdf = false;
+    std::string browser_path;
+    long render_timeout_seconds = 60;
+    long render_virtual_time_ms = 10000;
+    long render_max_bytes = 25LL * 1024 * 1024;
+    int render_width = 1280;
+    int render_height = 2000;
+
     static Config load();
     void ensure_dirs() const;
 

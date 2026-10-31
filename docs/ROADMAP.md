@@ -22,12 +22,17 @@
 
 ## v0.3 — browser capture
 
-- [ ] Chromium via CDP, one render worker at a time.
-- [ ] Save rendered HTML and screenshot.
-- [ ] Optional PDF via Chromium; optional `monolith`.
-- [ ] Browser process recycling every 10–20 captures.
-- [ ] Render timeout and body/screenshot size ceilings.
-- [ ] Degradation ladder when memory is tight.
+- [x] Chromium rendering behind a memory guard; HTML-only and opt-in, one
+      short-lived process per artifact instead of a persistent render worker.
+- [x] Save rendered DOM (`rendered.html`) and screenshot (`screenshot.png`).
+- [x] Optional PDF via `--print-to-pdf` (`ARCBOX_RENDER_PDF=1`); `monolith`
+      still not implemented.
+- [x] Every artifact gets a fresh process, so recycling is inherent.
+- [x] Render timeout and artifact size ceilings.
+- [x] Admission guard applies to the render step as well; the page is archived
+      even when the render is deferred.
+- [ ] Degradation ladder: choose the cheapest artifact when memory is tight.
+- [ ] Element-level ad blocking inside the browser (needs CDP interception).
 
 ## v0.4 — memory-aware scheduling
 

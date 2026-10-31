@@ -38,6 +38,10 @@ struct Snapshot {
     std::string headers_path;
     std::string metadata_path;
     std::string error;
+    // Headless browser artifacts.
+    std::string rendered_html_path;
+    std::string screenshot_path;
+    std::string pdf_path;
     int priority = 0;
     int attempts = 0;
     // Unix seconds when the snapshot becomes eligible again; 0 means "due now".
@@ -63,6 +67,9 @@ struct CaptureUpdate {
     std::string text_path;
     std::string headers_path;
     std::string metadata_path;
+    std::string rendered_html_path;
+    std::string screenshot_path;
+    std::string pdf_path;
     std::string body_text;
     std::string error;
     std::vector<ExtractedLink> links;

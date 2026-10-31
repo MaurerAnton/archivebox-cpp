@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "arcbox/adblock.hpp"
+#include "arcbox/browser.hpp"
 #include "arcbox/capture_http.hpp"
 #include "arcbox/cgroup.hpp"
 #include "arcbox/db.hpp"
@@ -196,6 +197,33 @@ static int worker_capture(Config& cfg,
                     text.resize(500000);
                 }
                 update.body_text = std::move(text);
+            }
+        }
+    }
+
+    // Rendering is the one capture step that can cost hundreds of megabytes,
+    // so it stays opt-in, HTML-only, and is re-checked against the admission
+    // guard instead of trusting the decision made before the fetch started.
+    if (cfg.render_enabled && update.status == "ok" &&
+        starts_with(update.content_type, "text/html")) {
+        HostMemory mem;
+        read_host_memory(mem);
+        const AdmissionDecision decision = admit_capture(cfg, mem);
+        if (decision.action != Admission::Proceed) {
+            // Not an error: the page itself is archived, only the optional
+            // render waits for a roomier moment.
+            std::cerr << "arcbox: #" << id << ": render skipped: "
+                      << admission_name(decision.action) << " ("
+                      << decision.reason << ")\n";
+        } else {
+            RenderResult rendered = render_page(cfg, snapshot->url, id);
+            if (rendered.attempted) {
+                update.rendered_html_path = rendered.rendered_html_path;
+                update.screenshot_path = rendered.screenshot_path;
+                update.pdf_path = rendered.pdf_path;
+                if (!rendered.ok && !rendered.error.empty()) {
+                    note_issue(update, "render: " + rendered.error);
+                }
             }
         }
     }
@@ -391,6 +419,15 @@ int cmd_show(Config& cfg, int64_t id) {
     }
     if (snapshot->attempts > 0) {
         std::cout << "attempts:    " << snapshot->attempts << "\n";
+    }
+    if (!snapshot->screenshot_path.empty()) {
+        std::cout << "screenshot:  " << snapshot->screenshot_path << "\n";
+    }
+    if (!snapshot->rendered_html_path.empty()) {
+        std::cout << "rendered:    " << snapshot->rendered_html_path << "\n";
+    }
+    if (!snapshot->pdf_path.empty()) {
+        std::cout << "pdf:         " << snapshot->pdf_path << "\n";
     }
     std::cout << "content:     " << snapshot->content_type << "\n"
               << "title:       " << snapshot->title << "\n";
