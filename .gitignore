@@ -11,7 +11,7 @@
 *.sqlite3-*
 *.warc
 *.warc.gz
-arcbox
+/arcbox
 compile_commands.json
 .cache/
 .idea/
