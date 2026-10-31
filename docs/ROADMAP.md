@@ -31,9 +31,12 @@
 
 ## v0.4 — memory-aware scheduling
 
-- [ ] Read `/proc/meminfo` and `/proc/pressure/memory`.
-- [ ] Pause queue when `MemAvailable < 1.5G` or PSI `some avg10 > 10`.
-- [ ] Queue priority and retry/backoff.
+The admission guard already shipped early, as part of v0.2:
+
+- [x] Read `/proc/meminfo` and `/proc/pressure/memory`.
+- [x] Pause queue when `MemAvailable < 1.5G` or PSI `some avg10 > 10`.
+- [ ] Grow the guard into full adaptive scheduling: queue priority and
+      retry/backoff instead of only pause/throttle.
 - [ ] Verify behavior on 8 GB with zram.
 
 ## v0.5 — ad blocking and replay

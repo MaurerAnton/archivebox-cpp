@@ -46,6 +46,9 @@ Target machine: 8 GB RAM, Arch Linux, systemd, cgroups v2.
 - Optional cgroup wrapping via `systemd-run --user --scope` (`MemoryHigh`,
   `MemoryMax`, `MemorySwapMax`, `CPUQuota`, `TasksMax`).
 - WARC 1.0 records: `warcinfo`, `request`, `response`, gzip-compressed.
+- Admission guard before every daemon capture: reads `/proc/meminfo` and
+  `/proc/pressure/memory`, throttles when PSI pressure is high, and pauses the
+  queue when free memory falls below ~1.5 GB.
 
 ## Not implemented yet
 
@@ -53,7 +56,7 @@ Target machine: 8 GB RAM, Arch Linux, systemd, cgroups v2.
 - PDF, screenshot, and `monolith` single-file capture.
 - Element-level ad blocking (uBlock-style filter lists).
 - WACZ packaging, content-addressed deduplication, and faithful replay.
-- PSI-based adaptive scheduling, recrawl policies, and retention rules.
+- Adaptive scheduling (queue priority, recrawl policies, retention rules).
 
 See [docs/ROADMAP.md](docs/ROADMAP.md) for the intended phases.
 
@@ -164,6 +167,27 @@ For a persistent daemon, install the files in [`systemd/`](systemd/). They put
 the daemon and its transient scopes into an `arcbox.slice` with a 2.5 GB ceiling.
 This is a *ceiling*, not a reservation: the host remains protected, and capture
 failures are treated as expendable.
+
+### Admission guard
+
+The cgroup caps one capture. The admission guard protects the *host*: before
+every queue pop the daemon samples `/proc/meminfo` and `/proc/pressure/memory`
+and either proceeds, throttles, or pauses. Thresholds are tunable:
+
+```bash
+ARCBOX_MIN_MEM_AVAILABLE_KB=1536000 \
+ARCBOX_PSI_SOME_MAX=10 \
+ARCBOX_THROTTLE_SLEEP=15 \
+ARCBOX_PAUSE_SLEEP=60 \
+arcbox daemon
+```
+
+Below the memory floor the queue pauses; above the PSI limit it throttles.
+Both checks fail open: on a kernel without `CONFIG_PSI` only the memory floor
+applies, and an unreadable `/proc/meminfo` cannot stall the queue forever. A
+single `arcbox capture` bypasses the guard on purpose — it is already an
+explicit request. With `--once` the daemon leaves the item queued instead of
+sleeping, which makes the path testable.
 
 The web UI itself holds one SQLite connection and renders one request at a time;
 it does not spawn workers. Keep it in the same slice if you expose it.

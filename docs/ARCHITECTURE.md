@@ -89,8 +89,8 @@ reimplementing them.
 ## Next architectural steps
 
 - CDP worker with one browser, one page, and a render budget.
-- PSI-aware admission: pause capture when `MemAvailable < 1.5G` or
-  `some avg10 > 10`.
+- Admission guard (shipped in v0.2): pause capture when `MemAvailable < 1.5G`
+  or `some avg10 > 10`; still needs the degradation ladder below.
 - Degradation ladder: full capture → HTML/screenshot only → WARC only →
   metadata only.
 - Content-addressed body dedup and WACZ packaging.
