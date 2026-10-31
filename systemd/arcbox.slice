@@ -1,0 +1,7 @@
+[Slice]
+# Persistent memory ceiling for the archiver daemon and its transient scopes.
+# Adjust downward on a smaller host. This is a ceiling, not a reservation.
+MemoryHigh=2200M
+MemoryMax=2500M
+MemorySwapMax=512M
+CPUQuota=250%

@@ -1,0 +1,22 @@
+[Unit]
+Description=ArchiveBox.cpp capture daemon
+Documentation=https://github.com/MaurerAnton/archivebox-cpp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/arcbox daemon
+Restart=on-failure
+RestartSec=10
+Environment=ARCBOX_DATA=%h/.local/share/arcbox
+Environment=ARCBOX_SLICE=arcbox.slice
+MemoryHigh=250M
+MemoryMax=300M
+CPUQuota=100%
+Nice=10
+IOSchedulingClass=idle
+Slice=arcbox.slice
+
+[Install]
+WantedBy=default.target

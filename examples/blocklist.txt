@@ -1,0 +1,7 @@
+# ArchiveBox.cpp host blocklist
+# One domain per line. Hosts-file and ABP host rules are accepted.
+# Examples:
+#   ads.example.com
+#   0.0.0.0 tracker.example.net
+#   ||ads.example.org^
+#   @@news.example.com
