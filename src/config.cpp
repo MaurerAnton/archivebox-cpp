@@ -68,6 +68,8 @@ Config Config::load() {
 
     cfg.render_enabled = getenv_or("ARCBOX_RENDER", "") == "1";
     cfg.render_pdf = getenv_or("ARCBOX_RENDER_PDF", "") == "1";
+    cfg.render_intercept =
+        getenv_or("ARCBOX_RENDER_INTERCEPT", "1") != "0";
     cfg.browser_path = getenv_or("ARCBOX_BROWSER", "");
     cfg.render_timeout_seconds =
         parse_long("ARCBOX_RENDER_TIMEOUT", cfg.render_timeout_seconds);

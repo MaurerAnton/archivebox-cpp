@@ -44,7 +44,8 @@ Target machine: 8 GB RAM, Arch Linux, systemd, cgroups v2.
 - `arcbox daemon [--once]` — process the queue sequentially.
 - Host-level ad blocking before a request, using a hosts/ABP-style domain
   blocklist, and the same blocklist is handed to the rendering browser as
-  `--host-resolver-rules`, so Chrome cannot fetch blocked subresources itself.
+  `--host-resolver-rules`, and by DevTools interception, so Chrome cannot
+  fetch blocked subresources itself.
 - `arcbox blocklist check URL` — see whether a URL would be blocked.
 - `arcbox blocklist import FILE` — merge an ABP or hosts list into the
   blocklist, skipping duplicates.
@@ -218,6 +219,24 @@ arcbox daemon
 `chromium`, or `google-chrome-stable` is used if found on `PATH`. No root
 access is needed: an unpacked Chrome for Testing build works as-is.
 
+#### Request interception over DevTools
+
+With rendering enabled, each page is also filtered from inside the browser: the
+headless Chrome starts with a debugging port, arcbox attaches to it over the
+DevTools protocol (a WebSocket, no extra dependencies), and answers every
+request through the `Fetch` domain — blocked ones are failed with
+`BlockedByClient` before a socket is opened. The same pass injects a small
+script that removes `iframe`/`img`/`script`/`link` elements pointing at
+blocked hosts, including the ones added later, so the rendered DOM is what a
+reader would see without ads.
+
+Everything stays disposable and bounded: one browser process, one session, the
+render timeout covers it, no DevTools message may exceed 96 MiB, and if the
+protocol handshake fails the render falls back to the classic
+one-process-per-artifact path instead of losing the snapshot. Set
+`ARCBOX_RENDER_INTERCEPT=0` to keep the old resolver-rules-only behaviour;
+`ARCBOX_DEBUG=1` traces the interception decisions on stderr.
+
 #### Degradation ladder
 
 Rendering is also the only step that degrades instead of stopping: it picks the
@@ -288,8 +307,14 @@ and `arcbox blocklist import FILE` merges an external list into `blocklist.txt`
 (hosts-file, bare domains, `||host^`, and `@@host` are all accepted). Importing
 the same list twice adds nothing.
 
-It is a DNS/host-level guard, not a full in-page ad blocker: cosmetic element
-hiding and redirect-target inspection are not implemented yet.
+Blocked hosts therefore never reach the network, from either side: the HTTP
+capture refuses them, Chrome's own requests are intercepted over DevTools,
+and elements pointing at them are dropped from the rendered DOM.
+
+It is still a request-level guard, not a full in-page ad blocker: cosmetic
+filter rules (`##`-style selectors) and redirect-target inspection are not
+implemented, so an ad served from the page's own host is archived as part of
+the page.
 
 ## Data layout
 

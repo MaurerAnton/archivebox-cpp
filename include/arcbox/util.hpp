@@ -32,6 +32,8 @@ std::string html_unescape(const std::string& text);
 std::string html_escape(const std::string& text);
 
 std::string json_escape(const std::string& s);
+std::string base64_encode(const std::vector<unsigned char>& data);
+bool base64_decode(const std::string& text, std::vector<unsigned char>& out);
 std::string format_size(int64_t bytes);
 // Parses "30d", "12h", "90m", "45s" and bare numbers (days). Returns false for
 // anything else, leaving `out` untouched.

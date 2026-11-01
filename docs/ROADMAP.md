@@ -35,7 +35,10 @@
       free memory; a `Throttle` verdict drops one tier instead of stopping.
 - [x] Size-aware render admission: a source above
       `ARCBOX_RENDER_MAX_SOURCE_BYTES` is archived without a browser.
-- [ ] Element-level ad blocking inside the browser (needs CDP interception).
+- [x] Element-level ad blocking inside the browser (needs CDP interception):
+      the interception pass injects a script that removes `iframe`/`img`/
+      `script`/`link` elements pointing at blocked hosts; cosmetic filter
+      rules remain unimplemented.
 - [x] Network-level ad blocking inside the browser: the blocklist becomes
       `--host-resolver-rules` per render pass (capped, page host and exceptions
       skipped).
@@ -54,7 +57,11 @@ The admission guard already shipped early, as part of v0.2:
 
 ## v0.5 — ad blocking and replay
 
-- [ ] CDP Fetch interception with filter-list rules.
+- [x] CDP Fetch interception with filter-list rules (`arcbox render` via
+      DevTools: every request is answered through `Fetch.requestPaused`,
+      blocked ones fail before leaving the browser; one WebSocket session per
+      page, bounded messages, classic path as fallback,
+      `ARCBOX_RENDER_INTERCEPT=0` to opt out).
 - [x] Import hosts/ABP lists (`arcbox blocklist import`); fetching and updating
       a remote list on a schedule is still open.
 - [ ] Per-snapshot block decision log.

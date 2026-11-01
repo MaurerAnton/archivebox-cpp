@@ -540,6 +540,7 @@ PY
     "$BIN" --data "$BLOCKED_DATA" \
         add "http://127.0.0.1:$PORT/adblock-probe.html" >/dev/null
     ARCBOX_RENDER=1 ARCBOX_MIN_MEM_AVAILABLE_KB=300000 \
+        ARCBOX_RENDER_INTERCEPT=1 \
         ARCBOX_RENDER_FULL_MB=200 ARCBOX_BROWSER="$BROWSER" \
         "$BIN" --data "$BLOCKED_DATA" daemon --once --no-cgroup \
         >/dev/null 2>"$DATA/adblock-render.log"
@@ -547,6 +548,13 @@ PY
     assert_contains "$BLOCKED_DOM" "Adblock probe" "probe page rendered"
     if grep -Fq 'data-img="loaded"' <<<"$BLOCKED_DOM"; then
         echo "Chrome fetched a subresource from a blocked host" >&2
+        exit 1
+    fi
+    # The same render goes through DevTools interception, which also strips the
+    # element pointing at the blocked host: only that path touches the DOM, so
+    # this doubles as the check that interception was really used.
+    if grep -Fq 'pixel.png' <<<"$BLOCKED_DOM"; then
+        echo "interception left an element pointing at a blocked host in the DOM" >&2
         exit 1
     fi
 

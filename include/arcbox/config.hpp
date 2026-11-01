@@ -38,6 +38,9 @@ struct Config {
     // always runs behind the same admission guard as everything else.
     bool render_enabled = false;
     bool render_pdf = false;
+    // Answer renderer requests through the DevTools protocol so the blocklist
+    // applies to what Chrome fetches itself, not just to arcbox's own copy.
+    bool render_intercept = true;
     std::string browser_path;
     long render_timeout_seconds = 60;
     long render_virtual_time_ms = 10000;

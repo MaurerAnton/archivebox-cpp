@@ -523,6 +523,71 @@ std::string html_escape(const std::string& text) {
     return out;
 }
 
+
+std::string base64_encode(const std::vector<unsigned char>& data) {
+    static const char table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((data.size() + 2) / 3) * 4);
+    std::size_t i = 0;
+    while (i + 2 < data.size()) {
+        const std::uint32_t block = (static_cast<std::uint32_t>(data[i]) << 16) |
+                                    (static_cast<std::uint32_t>(data[i + 1]) << 8) |
+                                    static_cast<std::uint32_t>(data[i + 2]);
+        out += table[(block >> 18) & 0x3f];
+        out += table[(block >> 12) & 0x3f];
+        out += table[(block >> 6) & 0x3f];
+        out += table[block & 0x3f];
+        i += 3;
+    }
+    const std::size_t left = data.size() - i;
+    if (left == 1) {
+        const std::uint32_t block = static_cast<std::uint32_t>(data[i]) << 16;
+        out += table[(block >> 18) & 0x3f];
+        out += table[(block >> 12) & 0x3f];
+        out += "==";
+    } else if (left == 2) {
+        const std::uint32_t block = (static_cast<std::uint32_t>(data[i]) << 16) |
+                                    (static_cast<std::uint32_t>(data[i + 1]) << 8);
+        out += table[(block >> 18) & 0x3f];
+        out += table[(block >> 12) & 0x3f];
+        out += table[(block >> 6) & 0x3f];
+        out += '=';
+    }
+    return out;
+}
+
+bool base64_decode(const std::string& text, std::vector<unsigned char>& out) {
+    auto value = [](char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        if (c == '+') return 62;
+        if (c == '/') return 63;
+        return -1;
+    };
+
+    out.clear();
+    std::uint32_t block = 0;
+    int bits = 0;
+    for (const char c : text) {
+        if (c == '=' || c == '\n' || c == '\r' || c == ' ') {
+            continue;
+        }
+        const int digit = value(c);
+        if (digit < 0) {
+            return false;
+        }
+        block = (block << 6) | static_cast<std::uint32_t>(digit);
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<unsigned char>((block >> bits) & 0xff));
+        }
+    }
+    return true;
+}
+
 std::string json_escape(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 8);
