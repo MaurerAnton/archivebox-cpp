@@ -53,7 +53,9 @@ The admission guard already shipped early, as part of v0.2:
 - [x] Pause queue when `MemAvailable < 1.5G` or PSI `some avg10 > 10`.
 - [x] Retry failed captures with exponential backoff and drain by priority
       instead of first-come-first-served; attempts survive restarts.
-- [ ] Verify behavior on 8 GB with zram.
+- [ ] Verify behavior on 8 GB with zram (unchecked on purpose: this host has
+      ~1 GB of RAM and no way to add swap, so the thresholds above were sized
+      from /proc, not measured on such a machine).
 
 ## v0.5 — ad blocking and replay
 
@@ -89,7 +91,10 @@ The admission guard already shipped early, as part of v0.2:
       bookmarklet covers the browser side; 64 KiB request cap, no auth, refused
       with 400 when the share holds no link). A real extension package is not
       planned.
-- [ ] Packaging for Arch (`PKGBUILD`) and a systemd user unit.
+- [x] Packaging for Arch (`packaging/PKGBUILD`: git-head build, serial cmake
+      for small hosts, ships the unit and slice to `/usr/lib/systemd/user`;
+      the unit itself already shipped in `systemd/arcbox.service` and
+      `systemd/arcbox.slice`).
 
 ## Non-goals
 

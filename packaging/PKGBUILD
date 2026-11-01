@@ -1,0 +1,58 @@
+# Maintainer: Anton Maurer <https://github.com/MaurerAnton>
+#
+# The project has no release tags yet, so this tracks git head and carries the
+# -git suffix; switch source= to a $url/releases tarball once there is one.
+pkgname=arcbox-git
+_pkgname=arcbox
+pkgver=0.2.0
+pkgrel=1
+pkgdesc="Low-memory self-hosted web archiver (ArchiveBox-compatible layout, C++20)"
+arch=(x86_64 aarch64)
+url="https://github.com/MaurerAnton/archivebox-cpp"
+license=(MIT)
+provides=("$_pkgname")
+conflicts=("$_pkgname")
+depends=(sqlite zlib gcc-libs openssl curl)
+makedepends=(cmake pkgconf)
+source=("$_pkgname::git+$url.git")
+sha256sums=(SKIP)
+
+pkgver() {
+    cd "$srcdir/$_pkgname"
+    printf "0.2.0.r%s.%s" "$(git rev-list --count HEAD)" \
+        "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    # One job on purpose: cmake --build without -j builds serially, and a
+    # parallel build is exactly what gets OOM-killed on the small hosts this
+    # archiver is written for.
+    cmake -S "$srcdir/$_pkgname" -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build
+}
+
+check() {
+    # The suite skips its browser and renders when the host has no browser or
+    # too little memory, so it stays honest inside a build container.
+    ARCBOX_MIN_MEM_AVAILABLE_KB=700000 ctest --test-dir build --output-on-failure
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install build
+
+    # The unit in the tree points at ~/.local/bin for the manual install
+    # (systemd/install-user.sh); the package owns /usr/bin instead.
+    sed 's|%h/.local/bin/arcbox|/usr/bin/arcbox|' \
+        "$srcdir/$_pkgname/systemd/arcbox.service" >arcbox.service
+    install -Dm644 arcbox.service "$pkgdir/usr/lib/systemd/user/arcbox.service"
+    install -Dm644 "$srcdir/$_pkgname/systemd/arcbox.slice" \
+        "$pkgdir/usr/lib/systemd/user/arcbox.slice"
+    install -Dm644 "$srcdir/$_pkgname/README.md" \
+        "$pkgdir/usr/share/doc/$_pkgname/README.md"
+    install -Dm644 "$srcdir/$_pkgname/docs/ROADMAP.md" \
+        "$pkgdir/usr/share/doc/$_pkgname/ROADMAP.md"
+    install -Dm644 "$srcdir/$_pkgname/LICENSE" \
+        "$pkgdir/usr/share/licenses/$_pkgname/LICENSE"
+}

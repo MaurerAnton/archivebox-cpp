@@ -85,6 +85,21 @@ sudo cmake --install build
 On a memory-constrained machine, use `-j1` for the build. The resulting
 executable has no Python runtime dependency.
 
+### Arch package
+
+`packaging/PKGBUILD` builds the current git head:
+
+```bash
+cd packaging && makepkg -si
+```
+
+It installs `/usr/bin/arcbox` and the systemd user unit from `systemd/`. The
+unit sets `MemoryHigh`/`MemoryMax`, which only takes effect when the host
+actually delegates the memory controller to user services; where it does not,
+arcbox still polices itself (see [Memory protection](#memory-protection)), and
+`systemd/install-user.sh` installs both units under `~/.config/systemd/user`
+instead.
+
 ## Quick start
 
 ```bash
