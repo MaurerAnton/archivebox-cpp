@@ -202,21 +202,21 @@ static int worker_capture(Config& cfg,
     }
 
     // Rendering is the one capture step that can cost hundreds of megabytes,
-    // so it stays opt-in, HTML-only, and is re-checked against the admission
-    // guard instead of trusting the decision made before the fetch started.
+    // so it stays opt-in, HTML-only, and re-reads host memory after the fetch:
+    // a page that was cheap to download can still be expensive to render. The
+    // ladder then picks the cheapest artifact set the host can afford.
     if (cfg.render_enabled && update.status == "ok" &&
         starts_with(update.content_type, "text/html")) {
         HostMemory mem;
         read_host_memory(mem);
-        const AdmissionDecision decision = admit_capture(cfg, mem);
-        if (decision.action != Admission::Proceed) {
-            // Not an error: the page itself is archived, only the optional
-            // render waits for a roomier moment.
-            std::cerr << "arcbox: #" << id << ": render skipped: "
-                      << admission_name(decision.action) << " ("
-                      << decision.reason << ")\n";
+        const RenderPlan plan = choose_render_plan(cfg, mem, update.size_bytes);
+        if (!plan.dom()) {
+            // Not an error: the page itself is archived, and the reason names
+            // the resource that ran out first (memory, size, or the guard).
+            std::cerr << "arcbox: #" << id << ": render skipped: " << plan.reason
+                      << "\n";
         } else {
-            RenderResult rendered = render_page(cfg, snapshot->url, id);
+            RenderResult rendered = render_page(cfg, snapshot->url, id, plan);
             if (rendered.attempted) {
                 update.rendered_html_path = rendered.rendered_html_path;
                 update.screenshot_path = rendered.screenshot_path;

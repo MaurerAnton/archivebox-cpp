@@ -31,7 +31,10 @@
 - [x] Render timeout and artifact size ceilings.
 - [x] Admission guard applies to the render step as well; the page is archived
       even when the render is deferred.
-- [ ] Degradation ladder: choose the cheapest artifact when memory is tight.
+- [x] Degradation ladder: DOM-only → DOM+screenshot → DOM+screenshot+PDF by
+      free memory; a `Throttle` verdict drops one tier instead of stopping.
+- [x] Size-aware render admission: a source above
+      `ARCBOX_RENDER_MAX_SOURCE_BYTES` is archived without a browser.
 - [ ] Element-level ad blocking inside the browser (needs CDP interception).
 
 ## v0.4 — memory-aware scheduling

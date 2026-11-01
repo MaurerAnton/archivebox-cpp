@@ -45,6 +45,17 @@ struct Config {
     int render_width = 1280;
     int render_height = 2000;
 
+    // Degradation ladder: rendering is never all-or-nothing. The less headroom
+    // the host has, the cheaper the artifact set; below the cheapest tier the
+    // page is archived with no browser at all. render_min_mb sits below the
+    // default admission floor on purpose: that tier is only reachable when an
+    // operator lowers ARCBOX_MIN_MEM_AVAILABLE_KB deliberately.
+    bool render_degrade = true;
+    long render_full_mb = 2500;
+    long render_lite_mb = 1500;
+    long render_min_mb = 1000;
+    long render_max_source_bytes = 20LL * 1024 * 1024;
+
     static Config load();
     void ensure_dirs() const;
 

@@ -39,6 +39,8 @@ void usage() {
         << "  ARCBOX_RENDER          1 enables headless rendering\n"
         << "  ARCBOX_RENDER_PDF      1 also prints the page to PDF\n"
         << "  ARCBOX_BROWSER         path to a headless Chromium\n"
+        << "  ARCBOX_RENDER_DEGRADE  0 disables the artifact ladder\n"
+        << "  ARCBOX_RENDER_MAX_SOURCE_BYTES  skip larger sources (20 MiB)\n"
         << "  ARCBOX_MAX_ATTEMPTS    attempts before giving up (default 5)\n"
         << "  ARCBOX_RETRY_BACKOFF   first retry delay in seconds (default 30)\n";
 }

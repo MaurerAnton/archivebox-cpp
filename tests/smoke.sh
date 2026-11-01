@@ -329,14 +329,17 @@ if [ -n "$BROWSER" ]; then
     RENDER_DATA="$DATA/render"
     "$BIN" --data "$RENDER_DATA" init >/dev/null
     "$BIN" --data "$RENDER_DATA" add "http://127.0.0.1:$PORT/" >/dev/null
-    # The admission guard has its own test below; here the floor is lowered so
-    # the render path itself is exercised even on a busy machine.
+    # The admission guard has its own test below; here the floor is lowered and
+    # the ladder thresholds are pinned so the full artifact set is exercised
+    # even on a busy machine.
     ARCBOX_RENDER=1 ARCBOX_RENDER_PDF=1 ARCBOX_MIN_MEM_AVAILABLE_KB=300000 \
+        ARCBOX_RENDER_FULL_MB=200 \
         ARCBOX_BROWSER="$BROWSER" \
         "$BIN" --data "$RENDER_DATA" daemon --once --no-cgroup >/dev/null 2>&1
     RENDER_SHOW="$("$BIN" --data "$RENDER_DATA" show 1)"
     assert_contains "$RENDER_SHOW" "screenshot:" "browser screenshot is stored"
     assert_contains "$RENDER_SHOW" "rendered:" "rendered DOM is stored"
+    assert_contains "$RENDER_SHOW" "pdf:" "browser PDF is stored"
     SHOT="$RENDER_DATA/snapshots/1/screenshot.png"
     DOM="$RENDER_DATA/snapshots/1/rendered.html"
     [ -s "$SHOT" ] || fail "screenshot is empty"
@@ -347,6 +350,44 @@ head = open(sys.argv[1], 'rb').read(8)
 sys.exit(0 if head == b'\x89PNG\r\n\x1a\n' else 1)
 PY
     [ $? -eq 0 ] || fail "screenshot is not a PNG"
+
+    # Degradation ladder: thresholds above any plausible free memory except the
+    # cheapest one, so the cheapest tier is chosen on every machine. The DOM
+    # must exist, the screenshot must not.
+    DEGRADE_DATA="$DATA/degrade"
+    "$BIN" --data "$DEGRADE_DATA" init >/dev/null
+    "$BIN" --data "$DEGRADE_DATA" add "http://127.0.0.1:$PORT/" >/dev/null
+    ARCBOX_RENDER=1 ARCBOX_MIN_MEM_AVAILABLE_KB=300000 \
+        ARCBOX_RENDER_FULL_MB=999999 ARCBOX_RENDER_LITE_MB=999999 \
+        ARCBOX_RENDER_MIN_MB=1 ARCBOX_BROWSER="$BROWSER" \
+        "$BIN" --data "$DEGRADE_DATA" daemon --once --no-cgroup \
+        >/dev/null 2>&1
+    DEGRADE_SHOW="$("$BIN" --data "$DEGRADE_DATA" show 1)"
+    assert_contains "$DEGRADE_SHOW" "rendered:" \
+        "cheapest tier still stores the rendered DOM"
+    if printf '%s\n' "$DEGRADE_SHOW" | grep -q "^screenshot:"; then
+        fail "dom-only tier must not launch the screenshot pass"
+    fi
+    [ ! -e "$DEGRADE_DATA/snapshots/1/screenshot.png" ] ||
+        fail "dom-only tier left a screenshot behind"
+
+    # Size-aware admission: a page above the source ceiling is archived over
+    # HTTP but never handed to the browser.
+    SIZE_DATA="$DATA/render-size"
+    "$BIN" --data "$SIZE_DATA" init >/dev/null
+    "$BIN" --data "$SIZE_DATA" add "http://127.0.0.1:$PORT/" >/dev/null
+    ARCBOX_RENDER=1 ARCBOX_MIN_MEM_AVAILABLE_KB=300000 \
+        ARCBOX_RENDER_FULL_MB=200 ARCBOX_RENDER_MAX_SOURCE_BYTES=10 \
+        ARCBOX_BROWSER="$BROWSER" \
+        "$BIN" --data "$SIZE_DATA" daemon --once --no-cgroup \
+        >/dev/null 2>"$DATA/render-size.log"
+    grep -q "render skipped: source is" "$DATA/render-size.log" ||
+        fail "oversized source must skip rendering with a reason"
+    SIZE_SHOW="$("$BIN" --data "$SIZE_DATA" show 1)"
+    if printf '%s\n' "$SIZE_SHOW" | grep -q "^rendered:"; then
+        fail "oversized source must not produce a rendered DOM"
+    fi
+
     echo "browser rendering checked with $BROWSER"
 else
     echo "no headless browser found; render checks skipped"

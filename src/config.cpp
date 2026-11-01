@@ -77,6 +77,14 @@ Config Config::load() {
         static_cast<int>(parse_long("ARCBOX_RENDER_WIDTH", cfg.render_width));
     cfg.render_height =
         static_cast<int>(parse_long("ARCBOX_RENDER_HEIGHT", cfg.render_height));
+    cfg.render_degrade = getenv_or("ARCBOX_RENDER_DEGRADE", "1") != "0";
+    cfg.render_full_mb =
+        parse_long("ARCBOX_RENDER_FULL_MB", cfg.render_full_mb);
+    cfg.render_lite_mb =
+        parse_long("ARCBOX_RENDER_LITE_MB", cfg.render_lite_mb);
+    cfg.render_min_mb = parse_long("ARCBOX_RENDER_MIN_MB", cfg.render_min_mb);
+    cfg.render_max_source_bytes = parse_long("ARCBOX_RENDER_MAX_SOURCE_BYTES",
+                                             cfg.render_max_source_bytes);
     cfg.memory_max = getenv_or("ARCBOX_MEMORY_MAX", cfg.memory_max);
     cfg.memory_high = getenv_or("ARCBOX_MEMORY_HIGH", cfg.memory_high);
     cfg.memory_swap_max =

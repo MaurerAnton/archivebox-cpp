@@ -213,6 +213,29 @@ arcbox daemon
 `ARCBOX_BROWSER` selects the binary; otherwise `chrome-headless-shell`,
 `chromium`, or `google-chrome-stable` is used if found on `PATH`. No root
 access is needed: an unpacked Chrome for Testing build works as-is.
+
+#### Degradation ladder
+
+Rendering is also the only step that degrades instead of stopping: it picks the
+largest artifact set the host can afford right now, and a page whose source is
+above `ARCBOX_RENDER_MAX_SOURCE_BYTES` (20 MiB by default) is never handed to
+the browser at all.
+
+| Free memory | Artifacts |
+| --- | --- |
+| ≥ `ARCBOX_RENDER_FULL_MB` (2500) | DOM + screenshot + PDF, if PDF is enabled |
+| ≥ `ARCBOX_RENDER_LITE_MB` (1500) | DOM + screenshot |
+| ≥ `ARCBOX_RENDER_MIN_MB` (1000) | DOM only |
+| below the cheapest tier, or guard `Pause` | no browser, HTTP capture only |
+
+The DOM always comes first: it is the cheapest artifact and the one replay
+needs when everything else fails. A `Throttle` verdict from the PSI guard drops
+one tier, so pressure is noticed before the free-memory counter falls. Set
+`ARCBOX_RENDER_DEGRADE=0` for the old all-or-nothing behaviour.
+
+`ARCBOX_RENDER_MIN_MB` sits below the default admission floor on purpose: that
+tier only becomes reachable when you deliberately lower
+`ARCBOX_MIN_MEM_AVAILABLE_KB`.
 Below the memory floor the queue pauses; above the PSI limit it throttles.
 Both checks fail open: on a kernel without `CONFIG_PSI` only the memory floor
 applies, and an unreadable `/proc/meminfo` cannot stall the queue forever. A

@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "arcbox/memory.hpp"
 #include "arcbox/util.hpp"
 
 namespace arcbox {
@@ -172,10 +173,106 @@ std::string find_browser(const Config& cfg) {
     return std::string();
 }
 
+const char* render_tier_name(RenderTier tier) {
+    switch (tier) {
+        case RenderTier::Skip:
+            return "skip";
+        case RenderTier::Dom:
+            return "dom";
+        case RenderTier::Screenshot:
+            return "screenshot";
+        case RenderTier::Full:
+            return "full";
+    }
+    return "unknown";
+}
+
+RenderPlan choose_render_plan(const Config& cfg,
+                              const HostMemory& mem,
+                              int64_t source_bytes) {
+    RenderPlan plan;
+    if (!cfg.render_enabled) {
+        plan.reason = "rendering disabled (ARCBOX_RENDER=1 enables it)";
+        return plan;
+    }
+
+    // Size-aware admission: the renderer's footprint grows with the DOM, so a
+    // page that is already huge before rendering is not worth the risk. The
+    // HTTP copy is archived regardless.
+    if (source_bytes > cfg.render_max_source_bytes) {
+        plan.reason = "source is " + format_size(source_bytes) +
+                      ", above the render ceiling of " +
+                      format_size(cfg.render_max_source_bytes);
+        return plan;
+    }
+
+    // The queue guard stays authoritative: a Pause means the host is short on
+    // memory, so no browser starts even for the cheapest artifact.
+    const AdmissionDecision admission = admit_capture(cfg, mem);
+    if (admission.action == Admission::Pause) {
+        plan.reason = "admission pause (" + admission.reason + ")";
+        return plan;
+    }
+
+    const long available_mb = static_cast<long>(mem.mem_available_kb / 1024);
+    if (available_mb >= cfg.render_full_mb) {
+        plan.tier = RenderTier::Full;
+    } else if (available_mb >= cfg.render_lite_mb) {
+        plan.tier = RenderTier::Screenshot;
+    } else if (available_mb >= cfg.render_min_mb) {
+        plan.tier = RenderTier::Dom;
+    }
+
+    // Throttling means PSI is elevated: drop one artifact even when the
+    // free-memory counter still looks comfortable.
+    if (plan.tier != RenderTier::Skip &&
+        admission.action == Admission::Throttle) {
+        if (plan.tier == RenderTier::Full) {
+            plan.tier = RenderTier::Screenshot;
+        } else if (plan.tier == RenderTier::Screenshot) {
+            plan.tier = RenderTier::Dom;
+        } else {
+            plan.tier = RenderTier::Skip;
+        }
+        plan.reason = "admission throttle (" + admission.reason +
+                      "), degraded to " + render_tier_name(plan.tier);
+    }
+
+    if (plan.tier == RenderTier::Skip) {
+        if (plan.reason.empty()) {
+            plan.reason = "MemAvailable " + std::to_string(available_mb) +
+                          "M below the cheapest render tier " +
+                          std::to_string(cfg.render_min_mb) + "M";
+        }
+        return plan;
+    }
+
+    // With degradation disabled the render is all-or-nothing again: either the
+    // full artifact set is affordable or the browser is not started at all.
+    if (!cfg.render_degrade && plan.tier != RenderTier::Full) {
+        plan.reason = "only " + std::to_string(available_mb) +
+                      "M free and degradation is disabled";
+        plan.tier = RenderTier::Skip;
+        return plan;
+    }
+
+    if (plan.reason.empty()) {
+        plan.reason = "render tier " + std::string(render_tier_name(plan.tier)) +
+                      " at " + std::to_string(available_mb) + "M free";
+    }
+    return plan;
+}
+
 RenderResult render_page(const Config& cfg,
                          const std::string& url,
-                         int64_t id) {
+                         int64_t id,
+                         const RenderPlan& plan) {
     RenderResult result;
+    if (!plan.dom() && !plan.screenshot() && !plan.pdf()) {
+        result.error = "empty render plan";
+        return result;
+    }
+
     const std::string browser = find_browser(cfg);
     if (browser.empty()) {
         result.error = "no headless browser found";
@@ -184,7 +281,8 @@ RenderResult render_page(const Config& cfg,
     result.attempted = true;
 
     cfg.ensure_dirs();
-    const std::filesystem::path directory = cfg.snapshots_dir() / std::to_string(id);
+    const std::filesystem::path directory =
+        cfg.snapshots_dir() / std::to_string(id);
     std::error_code ec;
     std::filesystem::create_directories(directory, ec);
 
@@ -193,32 +291,39 @@ RenderResult render_page(const Config& cfg,
 
     // Rendered DOM first: it is the cheapest artifact and the one replay
     // needs when the rest fails.
-    const std::filesystem::path html_path = cfg.resolve(
-        relative_artifact(id, "rendered.html"));
-    std::vector<std::string> args = base_args(cfg, browser);
-    args.push_back("--dump-dom");
-    args.push_back(url);
-    int rc = run_browser_process(args, html_path.string(), timeout, error);
-    if (rc == 0 && keep_artifact(html_path, cfg.render_max_bytes)) {
-        result.rendered_html_path = relative_artifact(id, "rendered.html");
-    } else if (result.error.empty() && rc != 0) {
-        result.error = "rendered html: " + error;
+    std::vector<std::string> args;
+    int rc = 0;
+    if (plan.dom()) {
+        const std::filesystem::path html_path =
+            cfg.resolve(relative_artifact(id, "rendered.html"));
+        args = base_args(cfg, browser);
+        args.push_back("--dump-dom");
+        args.push_back(url);
+        rc = run_browser_process(args, html_path.string(), timeout, error);
+        if (rc == 0 && keep_artifact(html_path, cfg.render_max_bytes)) {
+            result.rendered_html_path =
+                relative_artifact(id, "rendered.html");
+        } else if (result.error.empty() && rc != 0) {
+            result.error = "rendered html: " + error;
+        }
     }
 
-    const std::filesystem::path shot_path =
-        cfg.resolve(relative_artifact(id, "screenshot.png"));
-    args = base_args(cfg, browser);
-    args.push_back("--screenshot=" + shot_path.string());
-    args.push_back(url);
-    error.clear();
-    rc = run_browser_process(args, {}, timeout, error);
-    if (rc == 0 && keep_artifact(shot_path, cfg.render_max_bytes)) {
-        result.screenshot_path = relative_artifact(id, "screenshot.png");
-    } else if (result.error.empty() && rc != 0) {
-        result.error = "screenshot: " + error;
+    if (plan.screenshot()) {
+        const std::filesystem::path shot_path =
+            cfg.resolve(relative_artifact(id, "screenshot.png"));
+        args = base_args(cfg, browser);
+        args.push_back("--screenshot=" + shot_path.string());
+        args.push_back(url);
+        error.clear();
+        rc = run_browser_process(args, {}, timeout, error);
+        if (rc == 0 && keep_artifact(shot_path, cfg.render_max_bytes)) {
+            result.screenshot_path = relative_artifact(id, "screenshot.png");
+        } else if (result.error.empty() && rc != 0) {
+            result.error = "screenshot: " + error;
+        }
     }
 
-    if (cfg.render_pdf) {
+    if (plan.pdf() && cfg.render_pdf) {
         const std::filesystem::path pdf_path =
             cfg.resolve(relative_artifact(id, "page.pdf"));
         args = base_args(cfg, browser);
