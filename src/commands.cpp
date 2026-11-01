@@ -1,5 +1,6 @@
 #include "arcbox/commands.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -346,6 +347,135 @@ int cmd_blocklist_import(Config& cfg, const std::string& path) {
     std::cout << "imported " << added << " new rules (" << duplicates
               << " duplicates skipped) into " << cfg.blocklist_path().string()
               << "\n";
+    return 0;
+}
+
+// Removes every artifact of a snapshot from disk and returns how many bytes
+// that freed. With dry_run nothing is touched, but the size still measured, so
+// `prune --dry-run` reports what it would do.
+int64_t remove_snapshot_files(const Config& cfg,
+                              const Snapshot& snapshot,
+                              bool dry_run) {
+    const std::vector<std::string> paths = {
+        snapshot.warc_path,        snapshot.body_path,
+        snapshot.text_path,        snapshot.headers_path,
+        snapshot.metadata_path,    snapshot.rendered_html_path,
+        snapshot.screenshot_path,  snapshot.pdf_path};
+
+    int64_t freed = 0;
+    // Files counted here are counted again by the directory walk below, so
+    // they are remembered and skipped there.
+    std::vector<std::filesystem::path> counted;
+    for (const std::string& relative : paths) {
+        if (relative.empty()) {
+            continue;
+        }
+        std::error_code ec;
+        const std::filesystem::path target = cfg.resolve(relative);
+        if (!std::filesystem::is_regular_file(target, ec) || ec) {
+            continue;
+        }
+        const uintmax_t size = std::filesystem::file_size(target, ec);
+        if (ec) {
+            continue;
+        }
+        if (!dry_run) {
+            std::filesystem::remove(target, ec);
+            if (ec) {
+                continue;
+            }
+        }
+        freed += static_cast<int64_t>(size);
+        counted.push_back(target);
+    }
+
+    // The per-snapshot directory itself, which also covers artifacts the
+    // schema does not know about yet.
+    std::error_code ec;
+    const std::filesystem::path dir =
+        cfg.resolve("snapshots/" + std::to_string(snapshot.id));
+    if (std::filesystem::is_directory(dir, ec) && !ec) {
+        for (std::filesystem::recursive_directory_iterator it(dir, ec), end;
+             it != end; it.increment(ec)) {
+            if (ec) {
+                break;
+            }
+            if (!it->is_regular_file()) {
+                continue;
+            }
+            if (std::find(counted.begin(), counted.end(), it->path()) !=
+                counted.end()) {
+                continue;
+            }
+            freed += static_cast<int64_t>(it->file_size(ec));
+        }
+        if (!dry_run) {
+            std::filesystem::remove_all(dir, ec);
+        }
+    }
+    return freed;
+}
+
+int cmd_recrawl(Config& cfg, int64_t older_than_seconds, int limit) {
+    cfg.ensure_dirs();
+    Db db(cfg.db_path());
+    db.migrate();
+
+    const std::vector<int64_t> ids =
+        db.enqueue_recrawl(older_than_seconds, limit);
+    for (int64_t id : ids) {
+        const std::optional<Snapshot> snapshot = db.get(id);
+        if (snapshot) {
+            std::cout << "queued #" << id << " " << snapshot->url << "\n";
+        }
+    }
+    if (ids.empty()) {
+        std::cout << "nothing to recrawl\n";
+    } else {
+        std::cout << "recrawled " << ids.size() << " url(s)\n";
+    }
+    return 0;
+}
+
+int cmd_prune(Config& cfg,
+              int keep,
+              int64_t older_than_seconds,
+              bool dry_run) {
+    if (keep <= 0 && older_than_seconds <= 0) {
+        return fail("prune needs --keep N or --older-than DURATION");
+    }
+
+    cfg.ensure_dirs();
+    Db db(cfg.db_path());
+    db.migrate();
+
+    const std::vector<int64_t> ids =
+        db.prune_candidates(keep, older_than_seconds, 0);
+    if (ids.empty()) {
+        std::cout << "nothing to prune\n";
+        return 0;
+    }
+
+    int64_t freed = 0;
+    std::size_t removed = 0;
+    for (int64_t id : ids) {
+        const std::optional<Snapshot> snapshot = db.get(id);
+        if (!snapshot) {
+            continue;
+        }
+        const int64_t bytes = remove_snapshot_files(cfg, *snapshot, dry_run);
+        freed += bytes;
+        if (dry_run) {
+            ++removed;
+        } else if (db.delete_snapshot(id)) {
+            ++removed;
+        }
+        std::cout << (dry_run ? "would prune #" : "pruned #") << id << " "
+                  << snapshot->url << " (" << format_size(bytes) << ")\n";
+    }
+
+    std::cout << (dry_run ? "would prune " : "pruned ") << removed
+              << " snapshot(s), freed " << format_size(freed) << "\n";
     return 0;
 }
 

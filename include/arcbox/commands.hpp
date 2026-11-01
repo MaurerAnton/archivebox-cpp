@@ -11,6 +11,11 @@ namespace arcbox {
 int cmd_init(Config& cfg);
 int cmd_blocklist_check(Config& cfg, const std::string& url);
 int cmd_blocklist_import(Config& cfg, const std::string& path);
+int cmd_recrawl(Config& cfg, int64_t older_than_seconds, int limit);
+int cmd_prune(Config& cfg,
+              int keep,
+              int64_t older_than_seconds,
+              bool dry_run);
 int cmd_add(Config& cfg,
             const std::string& url,
             bool capture_now,

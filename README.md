@@ -329,6 +329,8 @@ arcbox export [--limit N] [--tag TAG] [--urls]
 arcbox serve [--host HOST] [--port PORT]
 arcbox daemon [--once] [--no-cgroup] [--no-block]
 arcbox retry ID|all
+arcbox recrawl [--older-than 30d] [--limit N]
+arcbox prune --keep N [--older-than 90d] [--dry-run]
 arcbox version
 ```
 
@@ -341,6 +343,23 @@ capture is not dropped: it is counted and requeued with exponential backoff
 up to `ARCBOX_RETRY_BACKOFF_MAX`, default 1 h). A snapshot that used up all its
 attempts stays `failed` until `arcbox retry` puts it back. A `blocked` decision
 is policy, not an error, and is never retried.
+
+### Recrawl and retention
+
+`arcbox recrawl` queues a fresh capture for every URL whose newest snapshot is
+older than the `--older-than` window. URLs that already have queued or running
+work are skipped, so running it twice in a row does nothing twice.
+
+`arcbox prune` drops old snapshots with their files: everything beyond the
+newest `--keep` per URL, and everything older than `--older-than` when given.
+One rule always wins: the newest snapshot of a URL is never pruned, because
+losing the only copy of a page is data loss, not retention. Run it with
+`--dry-run` first to see what it would do and how much space that frees;
+nothing is deleted in that mode. Without either filter the command refuses to
+run, so an accidental bare `arcbox prune` cannot empty the archive.
+
+Durations accept a suffix — `45s`, `90m`, `12h`, `30d`, `4w` — and a bare
+number means days.
 
 ## Development
 

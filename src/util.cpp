@@ -564,6 +564,50 @@ std::string format_size(int64_t bytes) {
     return std::string(buf);
 }
 
+bool parse_duration_seconds(const std::string& text, int64_t& out) {
+    std::string value = lower(trim(text));
+    if (value.empty()) {
+        return false;
+    }
+
+    // A bare number is days: retention thresholds are written that way, and
+    // anything finer can use an explicit suffix.
+    int64_t multiplier = 86400;
+    if (std::isalpha(static_cast<unsigned char>(value.back()))) {
+        switch (value.back()) {
+            case 's':
+                multiplier = 1;
+                break;
+            case 'm':
+                multiplier = 60;
+                break;
+            case 'h':
+                multiplier = 3600;
+                break;
+            case 'd':
+                multiplier = 86400;
+                break;
+            case 'w':
+                multiplier = 604800;
+                break;
+            default:
+                return false;
+        }
+        value.pop_back();
+    }
+
+    try {
+        const long long number = std::stoll(value);
+        if (number < 0) {
+            return false;
+        }
+        out = static_cast<int64_t>(number) * multiplier;
+    } catch (const std::exception&) {
+        return false;
+    }
+    return true;
+}
+
 std::string getenv_or(const char* name, const std::string& fallback) {
     const char* value = std::getenv(name);
     return value && *value ? std::string(value) : fallback;

@@ -33,6 +33,9 @@ std::string html_escape(const std::string& text);
 
 std::string json_escape(const std::string& s);
 std::string format_size(int64_t bytes);
+// Parses "30d", "12h", "90m", "45s" and bare numbers (days). Returns false for
+// anything else, leaving `out` untouched.
+bool parse_duration_seconds(const std::string& text, int64_t& out);
 std::string getenv_or(const char* name, const std::string& fallback);
 std::string read_self_exe();
 

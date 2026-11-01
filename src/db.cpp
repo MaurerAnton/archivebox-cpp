@@ -1,5 +1,8 @@
 #include "arcbox/db.hpp"
 
+#include <chrono>
+#include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -94,6 +97,19 @@ static Snapshot read_snapshot(sqlite3_stmt* stmt) {
     s.screenshot_path = column_text(stmt, 28);
     s.pdf_path = column_text(stmt, 29);
     return s;
+}
+
+// ISO-8601 timestamp `seconds` in the past, in the same UTC format the
+// snapshot rows use, so they can be compared as text.
+static std::string iso_seconds_ago(int64_t seconds) {
+    const auto then =
+        std::chrono::system_clock::now() - std::chrono::seconds(seconds);
+    const std::time_t raw = std::chrono::system_clock::to_time_t(then);
+    std::tm tm{};
+    gmtime_r(&raw, &tm);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);
+    return std::string(buf);
 }
 
 static sqlite3_stmt* prepare(sqlite3* db, const std::string& sql) {
@@ -558,6 +574,105 @@ int Db::reset_retry(bool all, int64_t id) {
                                  sqlite3_errmsg(db_));
     }
     return sqlite3_changes(db_);
+}
+
+std::vector<int64_t> Db::enqueue_recrawl(int64_t older_than_seconds,
+                                         int limit) {
+    // Age is compared as ISO-8601 text, which sorts correctly for the single
+    // UTC format we ever write.
+    std::string sql =
+        "SELECT u.url FROM urls u JOIN snapshots s ON s.url_id=u.id "
+        "GROUP BY u.id "
+        "HAVING SUM(CASE WHEN s.status IN ('queued','running') THEN 1 ELSE 0 "
+        "END) = 0";
+    if (older_than_seconds > 0) {
+        sql += " AND MAX(s.created_at) < ?";
+    }
+    sql += " ORDER BY MAX(s.created_at) ASC LIMIT ?";
+
+    sqlite3_stmt* stmt = prepare(db_, sql);
+    int bind = 1;
+    const std::string cutoff =
+        older_than_seconds > 0 ? iso_seconds_ago(older_than_seconds) : "";
+    if (older_than_seconds > 0) {
+        sqlite3_bind_text(stmt, bind++, cutoff.c_str(), -1, SQLITE_TRANSIENT);
+    }
+    sqlite3_bind_int(stmt, bind, limit > 0 ? limit : -1);
+
+    std::vector<std::string> urls;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        urls.push_back(column_text(stmt, 0));
+    }
+    sqlite3_finalize(stmt);
+
+    std::vector<int64_t> ids;
+    ids.reserve(urls.size());
+    for (const std::string& url : urls) {
+        ids.push_back(enqueue(url, 0));
+    }
+    return ids;
+}
+
+std::vector<int64_t> Db::prune_candidates(int keep,
+                                          int64_t older_than_seconds,
+                                          int limit) {
+    const std::string cutoff = older_than_seconds > 0
+                                   ? iso_seconds_ago(older_than_seconds)
+                                   : std::string();
+    sqlite3_stmt* stmt = prepare(
+        db_,
+        "SELECT id, created_at, ROW_NUMBER() OVER (PARTITION BY url_id "
+        "ORDER BY created_at DESC, id DESC) AS pos FROM snapshots "
+        "ORDER BY url_id, pos");
+
+    std::vector<int64_t> out;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const int64_t id = sqlite3_column_int64(stmt, 0);
+        const std::string created_at = column_text(stmt, 1);
+        const int64_t rank = sqlite3_column_int64(stmt, 2);
+        if (rank <= 1) {
+            // Losing the only snapshot of a URL would not be a retention
+            // policy, it would be data loss.
+            continue;
+        }
+        const bool beyond_keep = keep > 0 && rank > keep;
+        const bool stale = !cutoff.empty() && created_at < cutoff;
+        if (beyond_keep || stale) {
+            out.push_back(id);
+            if (limit > 0 && static_cast<int>(out.size()) >= limit) {
+                break;
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+    return out;
+}
+
+bool Db::delete_snapshot(int64_t id) {
+    exec("BEGIN IMMEDIATE");
+    try {
+        // The full-text index is a virtual table, so the cascade from
+        // snapshots never reaches it.
+        sqlite3_stmt* stmt = prepare(db_, "DELETE FROM search WHERE rowid=?");
+        sqlite3_bind_int64(stmt, 1, id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        stmt = prepare(db_, "DELETE FROM snapshots WHERE id=?");
+        sqlite3_bind_int64(stmt, 1, id);
+        const int rc = sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+        if (rc != SQLITE_DONE) {
+            throw std::runtime_error(std::string("delete snapshot failed: ") +
+                                     sqlite3_errmsg(db_));
+        }
+        const bool removed = sqlite3_changes(db_) > 0;
+        exec("COMMIT");
+        return removed;
+    } catch (...) {
+        exec("ROLLBACK");
+        throw;
+    }
 }
 
 std::vector<Snapshot> Db::list(int limit, const std::string& tag) {

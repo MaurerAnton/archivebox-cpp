@@ -338,6 +338,70 @@ IMPORT_AGAIN="$(run_arcbox blocklist import "$BLOCKLIST_SRC")"
 assert_contains "$IMPORT_AGAIN" "imported 0 new rules" \
     "importing twice is idempotent"
 
+# --- scheduled recrawl and retention ---
+RET_DATA="$DATA/retention"
+list_ids() {
+    "$BIN" --data "$RET_DATA" list | awk -F'\t' 'NR>1 {print $1}'
+}
+search_ids() {
+    "$BIN" --data "$RET_DATA" search smoke | awk -F'\t' 'NR>1 {print $1}'
+}
+row_status() {
+    "$BIN" --data "$RET_DATA" list | awk -F'\t' -v id="$1" 'NR>1 && $1==id {print $2}'
+}
+backdate() {
+    python3 - "$RET_DATA/index.sqlite3" "$1" <<'PY'
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute("UPDATE snapshots SET created_at='2020-01-01T00:00:00Z' WHERE id=?",
+           (int(sys.argv[2]),))
+db.commit()
+PY
+}
+"$BIN" --data "$RET_DATA" init >/dev/null
+"$BIN" --data "$RET_DATA" add "http://127.0.0.1:$PORT/" >/dev/null
+"$BIN" --data "$RET_DATA" capture --no-cgroup --id 1 >/dev/null
+"$BIN" --data "$RET_DATA" add "http://127.0.0.1:$PORT/" >/dev/null
+"$BIN" --data "$RET_DATA" capture --no-cgroup --id 2 >/dev/null
+
+assert_contains "$("$BIN" --data "$RET_DATA" recrawl --older-than 1d)" \
+    "nothing to recrawl" "recent snapshots are not stale yet"
+if "$BIN" --data "$RET_DATA" prune >/dev/null 2>&1; then
+    fail "prune without --keep or --older-than must refuse"
+fi
+if "$BIN" --data "$RET_DATA" prune --older-than 5x >/dev/null 2>&1; then
+    fail "prune must reject an unparseable duration"
+fi
+
+backdate 1
+DRY_OUT="$("$BIN" --data "$RET_DATA" prune --keep 1 --dry-run)"
+assert_contains "$DRY_OUT" "would prune 1 snapshot(s)" "dry run reports work"
+[[ -f "$RET_DATA/snapshots/1/body.bin" ]] || fail "dry run must not delete files"
+"$BIN" --data "$RET_DATA" show 1 | grep -Fq "url:" \
+    || fail "dry run must not drop rows"
+
+PRUNE_OUT="$("$BIN" --data "$RET_DATA" prune --keep 1)"
+assert_contains "$PRUNE_OUT" "pruned 1 snapshot(s)" "keep=1 drops the older one"
+[[ ! -e "$RET_DATA/snapshots/1" ]] || fail "pruned artifacts should be gone"
+[[ -f "$RET_DATA/snapshots/2/body.bin" ]] || fail "kept snapshot stays intact"
+[[ "$(list_ids)" == "2" ]] || fail "pruned snapshot should leave the index"
+[[ "$(search_ids)" == "2" ]] \
+    || fail "pruned snapshot should leave the search index"
+
+# The newest snapshot per URL survives even when it is old: dropping the only
+# copy of a page is data loss, not retention.
+backdate 2
+assert_contains "$("$BIN" --data "$RET_DATA" prune --older-than 1d)" \
+    "nothing to prune" "newest snapshot is never pruned"
+
+RECRAWL_OUT="$("$BIN" --data "$RET_DATA" recrawl --older-than 1d)"
+assert_contains "$RECRAWL_OUT" "recrawled 1 url(s)" "stale url is requeued"
+[[ "$(list_ids)" == *3* ]] || fail "recrawl should create a new snapshot"
+[[ "$(row_status 3)" == "queued" ]] \
+    || fail "recrawled snapshot should be queued"
+assert_contains "$("$BIN" --data "$RET_DATA" recrawl --older-than 1d)" \
+    "nothing to recrawl" "url with pending work is not queued twice"
+
 # --- headless browser rendering (skipped when no browser is installed) ---
 BROWSER=""
 for candidate in \

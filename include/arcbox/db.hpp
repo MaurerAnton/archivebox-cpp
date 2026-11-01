@@ -100,6 +100,19 @@ public:
                         long backoff_max_seconds);
     // Clears the attempt counter so failed work can be picked up again.
     int reset_retry(bool all, int64_t id);
+    // Queues a fresh capture for every URL whose newest snapshot is older than
+    // `older_than_seconds`; 0 drops the age check. URLs that already have
+    // queued or running work are skipped. Returns the new snapshot ids.
+    std::vector<int64_t> enqueue_recrawl(int64_t older_than_seconds, int limit);
+    // Snapshot ids that a retention policy may drop: beyond the newest `keep`
+    // per URL, or older than `older_than_seconds`. Either filter is off when
+    // its value is 0, and the newest snapshot per URL is never a candidate.
+    std::vector<int64_t> prune_candidates(int keep,
+                                          int64_t older_than_seconds,
+                                          int limit);
+    // Removes a snapshot row with its search entry, links and tags. Files on
+    // disk are the caller's job, so nothing here can leave an orphan row.
+    bool delete_snapshot(int64_t id);
     std::vector<Snapshot> list(int limit, const std::string& tag = {});
     std::vector<Snapshot> search(const std::string& query,
                                  int limit,

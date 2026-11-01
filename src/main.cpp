@@ -29,6 +29,8 @@ void usage() {
         << "  arcbox [--data DIR] serve [--host HOST] [--port PORT]\n"
         << "  arcbox [--data DIR] daemon [--once] [--no-cgroup] [--no-block]\n"
         << "  arcbox [--data DIR] retry ID|all\n"
+        << "  arcbox [--data DIR] recrawl [--older-than 30d] [--limit N]\n"
+        << "  arcbox [--data DIR] prune --keep N [--older-than 90d] [--dry-run]\n"
         << "  arcbox [--data DIR] blocklist check URL\n"
         << "  arcbox [--data DIR] blocklist import FILE\n"
         << "  arcbox version\n\n"
@@ -490,6 +492,78 @@ int main(int argc, char** argv) {
                 return 1;
             }
             return arcbox::cmd_retry(cfg, target);
+        }
+        if (command == "recrawl") {
+            int64_t older_than = 0;
+            int limit = 0;
+            while (index < args.size()) {
+                std::string value;
+                if (args[index] == "--older-than") {
+                    if (!take_value(args, index, value)) {
+                        std::cerr << "arcbox: --older-than requires a value\n";
+                        return 1;
+                    }
+                    if (!arcbox::parse_duration_seconds(value, older_than)) {
+                        std::cerr << "arcbox: invalid duration: " << value
+                                  << " (use 30d, 12h, 90m)\n";
+                        return 1;
+                    }
+                } else if (args[index] == "--limit") {
+                    if (!take_value(args, index, value)) {
+                        std::cerr << "arcbox: --limit requires a value\n";
+                        return 1;
+                    }
+                    try {
+                        limit = std::stoi(value);
+                    } catch (const std::exception&) {
+                        std::cerr << "arcbox: invalid limit: " << value << "\n";
+                        return 1;
+                    }
+                } else {
+                    std::cerr << "arcbox: unknown option: " << args[index]
+                              << "\n";
+                    return 1;
+                }
+            }
+            return arcbox::cmd_recrawl(cfg, older_than, limit);
+        }
+        if (command == "prune") {
+            int keep = 0;
+            int64_t older_than = 0;
+            bool dry_run = false;
+            while (index < args.size()) {
+                std::string value;
+                if (args[index] == "--keep") {
+                    if (!take_value(args, index, value)) {
+                        std::cerr << "arcbox: --keep requires a value\n";
+                        return 1;
+                    }
+                    try {
+                        keep = std::stoi(value);
+                    } catch (const std::exception&) {
+                        std::cerr << "arcbox: invalid keep: " << value << "\n";
+                        return 1;
+                    }
+                } else if (args[index] == "--older-than") {
+                    if (!take_value(args, index, value)) {
+                        std::cerr << "arcbox: --older-than requires a value\n";
+                        return 1;
+                    }
+                    if (!arcbox::parse_duration_seconds(value, older_than)) {
+                        std::cerr << "arcbox: invalid duration: " << value
+                                  << " (use 90d, 12h)\n";
+                        return 1;
+                    }
+                } else if (args[index] == "--dry-run") {
+                    dry_run = true;
+                    ++index;
+                } else {
+                    std::cerr << "arcbox: unknown option: " << args[index]
+                              << "\n";
+                    return 1;
+                }
+            }
+            return arcbox::cmd_prune(cfg, keep, older_than, dry_run);
         }
         if (command == "blocklist") {
             if (index >= args.size()) {

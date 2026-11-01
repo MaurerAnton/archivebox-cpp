@@ -64,7 +64,8 @@ The admission guard already shipped early, as part of v0.2:
 ## v0.6 — dedup and operations
 
 - [ ] Content-addressed storage for bodies/WARCs.
-- [ ] Scheduled recrawls and retention policy.
+- [x] Scheduled recrawls and retention policy (`arcbox recrawl`, `arcbox prune`
+      --keep/--older-than/--dry-run); daemon-side scheduling is still manual.
 - [ ] Browser extension / share target (optional).
 - [ ] Packaging for Arch (`PKGBUILD`) and a systemd user unit.
 
