@@ -1,5 +1,8 @@
 #include "arcbox/memory.hpp"
 
+#include "arcbox/util.hpp"
+
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -41,11 +44,23 @@ bool parse_psi_avg10(const std::string& line, const char* key, double& out) {
 
 } // namespace
 
+MemorySources default_memory_sources() {
+    MemorySources sources;
+    sources.meminfo_path = getenv_or("ARCBOX_MEMINFO_FILE", "/proc/meminfo");
+    sources.psi_path = getenv_or("ARCBOX_PSI_FILE", "/proc/pressure/memory");
+    sources.swaps_path = getenv_or("ARCBOX_SWAPS_FILE", "/proc/swaps");
+    return sources;
+}
+
 bool read_host_memory(HostMemory& out) {
+    return read_host_memory(out, default_memory_sources());
+}
+
+bool read_host_memory(HostMemory& out, const MemorySources& sources) {
     out = HostMemory{};
     bool have_meminfo = false;
 
-    std::ifstream meminfo("/proc/meminfo");
+    std::ifstream meminfo(sources.meminfo_path);
     if (meminfo) {
         std::string line;
         while (std::getline(meminfo, line)) {
@@ -57,11 +72,38 @@ bool read_host_memory(HostMemory& out) {
                 if (parse_kb_value(line, out.mem_available_kb)) {
                     have_meminfo = true;
                 }
+            } else if (line.rfind("SwapTotal:", 0) == 0) {
+                parse_kb_value(line, out.swap_total_kb);
+            } else if (line.rfind("SwapFree:", 0) == 0) {
+                parse_kb_value(line, out.swap_free_kb);
             }
         }
     }
 
-    std::ifstream psi("/proc/pressure/memory");
+    // /proc/swaps tells swap *type*, which /proc/meminfo does not: a zram
+    // device is compressed RAM and can be counted (partly) as available
+    // memory, while a swapfile or partition cannot.
+    std::ifstream swaps(sources.swaps_path);
+    if (swaps) {
+        std::string line;
+        std::getline(swaps, line); // header
+        while (std::getline(swaps, line)) {
+            std::istringstream iss(line);
+            std::string device;
+            if (!(iss >> device)) {
+                continue;
+            }
+            const auto slash = device.find_last_of('/');
+            const std::string base =
+                slash == std::string::npos ? device : device.substr(slash + 1);
+            if (base.rfind("zram", 0) == 0) {
+                out.swap_on_zram = true;
+                break;
+            }
+        }
+    }
+
+    std::ifstream psi(sources.psi_path);
     if (psi) {
         std::string line;
         while (std::getline(psi, line)) {
@@ -74,18 +116,39 @@ bool read_host_memory(HostMemory& out) {
     return have_meminfo;
 }
 
+uint64_t effective_available_kb(const HostMemory& mem,
+                                double zram_swap_weight) {
+    uint64_t available = mem.mem_available_kb;
+    if (!mem.swap_on_zram || zram_swap_weight <= 0.0) {
+        return available;
+    }
+    if (zram_swap_weight > 1.0) {
+        zram_swap_weight = 1.0;
+    }
+    return available +
+           static_cast<uint64_t>(static_cast<double>(mem.swap_free_kb) *
+                                 zram_swap_weight);
+}
+
 AdmissionDecision admit_capture(const Config& cfg, const HostMemory& mem) {
     AdmissionDecision decision;
 
     // A zero reading means /proc/meminfo was unreadable; fail open rather than
     // stalling the queue forever.
-    if (mem.mem_available_kb > 0 &&
-        static_cast<long>(mem.mem_available_kb) < cfg.min_mem_available_kb) {
+    const uint64_t available =
+        effective_available_kb(mem, cfg.zram_swap_weight);
+    if (available > 0 &&
+        static_cast<long>(available) < cfg.min_mem_available_kb) {
         decision.action = Admission::Pause;
-        decision.reason = "MemAvailable " +
-                          std::to_string(mem.mem_available_kb / 1024) +
-                          "M below floor " +
+        decision.reason = "effective available " +
+                          std::to_string(available / 1024) + "M below floor " +
                           std::to_string(cfg.min_mem_available_kb / 1024) + "M";
+        if (mem.swap_on_zram && mem.swap_free_kb > 0) {
+            decision.reason += " (MemAvailable " +
+                               std::to_string(mem.mem_available_kb / 1024) +
+                               "M plus zram swap " +
+                               std::to_string(mem.swap_free_kb / 1024) + "M)";
+        }
         decision.sleep_seconds = cfg.pause_sleep_seconds;
         return decision;
     }

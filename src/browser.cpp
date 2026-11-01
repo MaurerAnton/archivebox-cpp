@@ -345,7 +345,11 @@ RenderPlan choose_render_plan(const Config& cfg,
         return plan;
     }
 
-    const long available_mb = static_cast<long>(mem.mem_available_kb / 1024);
+    // zram swap counts here too, so a host that keeps its cold pages
+    // compressed can still afford a heavier tier than MemAvailable alone
+    // suggests.
+    const long available_mb = static_cast<long>(
+        effective_available_kb(mem, cfg.zram_swap_weight) / 1024);
     if (available_mb >= cfg.render_full_mb) {
         plan.tier = RenderTier::Full;
     } else if (available_mb >= cfg.render_lite_mb) {

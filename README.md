@@ -230,6 +230,32 @@ ARCBOX_PAUSE_SLEEP=60 \
 arcbox daemon
 ```
 
+What the host reports — including swap type and the derived value the guard
+actually compares against the floor — is printed by:
+
+```bash
+arcbox memcheck
+```
+
+#### zram swap
+
+On a laptop or small VPS the memory picture usually includes zram, and zram is
+compressed RAM rather than disk: ignoring it would pause the queue while
+hundreds of megabytes are still usable. The guard therefore adds half of the
+free zram swap to `MemAvailable`:
+
+```
+effective = MemAvailable + SwapFree * ARCBOX_ZRAM_SWAP_WEIGHT   # default 0.5
+```
+
+Disk-backed swap is credited as zero — it keeps the box alive but makes
+captures unusably slow, so it must not talk the guard into starting a browser.
+Set `ARCBOX_ZRAM_SWAP_WEIGHT=0` for the old behaviour, `1` to count compressed
+pages as RAM.
+
+[`docs/bigmemory.md`](docs/bigmemory.md) has the measurements behind these
+numbers and the checklist for ~8 GB hosts.
+
 ### Headless rendering
 
 Rendering is **off by default** (`ARCBOX_RENDER=1` enables it): it is the only

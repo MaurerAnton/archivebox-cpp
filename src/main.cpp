@@ -24,6 +24,7 @@ void usage() {
         << "  arcbox [--data DIR] tag ID TAG [TAG...]\n"
         << "  arcbox [--data DIR] untag ID TAG [TAG...]\n"
         << "  arcbox [--data DIR] tags\n"
+        << "  arcbox [--data DIR] memcheck\n"
         << "  arcbox [--data DIR] import FILE|- [--capture] [--no-cgroup] [--no-block]\n"
         << "  arcbox [--data DIR] export [--limit N] [--tag TAG] [--urls]\n"
         << "  arcbox [--data DIR] serve [--host HOST] [--port PORT]\n"
@@ -46,6 +47,11 @@ void usage() {
         << "  ARCBOX_BROWSER         path to a headless Chromium\n"
         << "  ARCBOX_RENDER_DEGRADE  0 disables the artifact ladder\n"
         << "  ARCBOX_RENDER_MAX_SOURCE_BYTES  skip larger sources (20 MiB)\n"
+        << "  ARCBOX_MIN_MEM_AVAILABLE_KB  memory floor in kB (default 1536000)\n"
+        << "  ARCBOX_ZRAM_SWAP_WEIGHT  share of free zram swap counted as memory (0.5)\n"
+        << "  ARCBOX_PSI_SOME_MAX      PSI some avg10 that throttles the queue (10)\n"
+        << "  ARCBOX_MEMINFO_FILE    override /proc/meminfo for the guard\n"
+        << "  ARCBOX_SWAPS_FILE      override /proc/swaps for the guard\n"
         << "  ARCBOX_MAX_ATTEMPTS    attempts before giving up (default 5)\n"
         << "  ARCBOX_RETRY_BACKOFF   first retry delay in seconds (default 30)\n";
 }
@@ -341,6 +347,18 @@ int main(int argc, char** argv) {
                 return 1;
             }
             return arcbox::cmd_tags(cfg);
+        }
+        if (command == "memcheck") {
+            if (index != args.size() &&
+                (args[index] == "--help" || args[index] == "-h")) {
+                usage();
+                return 0;
+            }
+            if (index != args.size()) {
+                std::cerr << "arcbox: memcheck accepts no arguments\n";
+                return 1;
+            }
+            return arcbox::cmd_memcheck(cfg);
         }
         if (command == "import") {
             std::string path;

@@ -53,9 +53,13 @@ The admission guard already shipped early, as part of v0.2:
 - [x] Pause queue when `MemAvailable < 1.5G` or PSI `some avg10 > 10`.
 - [x] Retry failed captures with exponential backoff and drain by priority
       instead of first-come-first-served; attempts survive restarts.
-- [ ] Verify behavior on 8 GB with zram (unchecked on purpose: this host has
-      ~1 GB of RAM and no way to add swap, so the thresholds above were sized
-      from /proc, not measured on such a machine).
+- [x] Verify behavior on 8 GB with zram. The 8 GB-class host turned out to be
+      reachable after all (7.7 GB RAM with a 3 GB `/dev/zram0`), so this is a
+      measurement rather than a note: the guard now credits half of free zram
+      swap towards `MemAvailable` (disk swap stays worth zero), `arcbox
+      memcheck` prints the derived value, and the proceed → pause → proceed
+      crossing was reproduced under a real ballast. Numbers, the Arch zram
+      setup and what is still unmeasured: [`docs/bigmemory.md`](bigmemory.md).
 
 ## v0.5 — ad blocking and replay
 

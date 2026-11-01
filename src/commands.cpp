@@ -964,6 +964,43 @@ int cmd_tags(Config& cfg) {
     return 0;
 }
 
+// A read-only view of what the admission guard sees. It exists because the
+// guard is otherwise invisible: on a small host the interesting question is
+// not "did it run" but "why did it not", and that needs the same numbers the
+// guard used, including whether swap counts as memory.
+int cmd_memcheck(Config& cfg) {
+    HostMemory mem;
+    if (!read_host_memory(mem)) {
+        std::cerr << "arcbox: cannot read host memory state\n";
+        return 1;
+    }
+    const uint64_t effective =
+        effective_available_kb(mem, cfg.zram_swap_weight);
+    const AdmissionDecision decision = admit_capture(cfg, mem);
+
+    std::cout << "arcbox memcheck\n"
+              << "  MemTotal      " << mem.mem_total_kb / 1024 << "M\n"
+              << "  MemAvailable  " << mem.mem_available_kb / 1024 << "M\n"
+              << "  Swap          " << mem.swap_free_kb / 1024 << "M free of "
+              << mem.swap_total_kb / 1024 << "M"
+              << (mem.swap_total_kb == 0 ? " (none)"
+                                         : (mem.swap_on_zram ? " (zram)"
+                                                             : " (disk)"))
+              << "\n"
+              << "  Effective     " << effective / 1024 << "M";
+    if (mem.swap_on_zram && mem.swap_free_kb > 0) {
+        std::cout << " (swap weighted " << cfg.zram_swap_weight << ")";
+    }
+    std::cout << "\n"
+              << "  Floor         " << cfg.min_mem_available_kb / 1024 << "M\n"
+              << "  PSI memory    some=" << mem.psi_some_avg10
+              << " full=" << mem.psi_full_avg10
+              << (mem.psi_supported ? "" : " (unsupported)") << "\n"
+              << "  Admission     " << admission_name(decision.action) << ": "
+              << decision.reason << "\n";
+    return 0;
+}
+
 int cmd_import(Config& cfg,
                const std::string& path,
                bool capture_now,

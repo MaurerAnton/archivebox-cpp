@@ -15,6 +15,11 @@ struct Config {
 
     // PSI-aware admission control.
     long min_mem_available_kb = 1500LL * 1024;
+    // How much of free *zram* swap counts towards the memory floor. A zram
+    // device is compressed RAM: pages sitting in it are ~2-3x smaller than in
+    // RAM, so counting all of it would be optimistic and half of it is a safe
+    // default. Disk-backed swap is never credited (see effective_available_kb).
+    double zram_swap_weight = 0.5;
     double psi_some_avg10_max = 10.0;
     long throttle_sleep_seconds = 15;
     long pause_sleep_seconds = 60;

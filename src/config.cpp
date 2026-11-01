@@ -49,6 +49,13 @@ Config Config::load() {
 
     cfg.min_mem_available_kb =
         parse_long("ARCBOX_MIN_MEM_AVAILABLE_KB", cfg.min_mem_available_kb);
+    cfg.zram_swap_weight =
+        parse_double("ARCBOX_ZRAM_SWAP_WEIGHT", cfg.zram_swap_weight);
+    if (cfg.zram_swap_weight < 0.0) {
+        cfg.zram_swap_weight = 0.0;
+    } else if (cfg.zram_swap_weight > 1.0) {
+        cfg.zram_swap_weight = 1.0;
+    }
     cfg.psi_some_avg10_max =
         parse_double("ARCBOX_PSI_SOME_MAX", cfg.psi_some_avg10_max);
     cfg.throttle_sleep_seconds =

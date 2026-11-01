@@ -45,3 +45,12 @@ add_test(
     NAME smoke
     COMMAND ${CMAKE_SOURCE_DIR}/tests/smoke.sh $<TARGET_FILE:arcbox>
 )
+add_test(
+    NAME memory
+    COMMAND ${CMAKE_SOURCE_DIR}/tests/memory.sh $<TARGET_FILE:arcbox>
+)
+# Real-host check for ~8 GB boxes with zram; skips itself anywhere else.
+add_test(
+    NAME bigmemory
+    COMMAND ${CMAKE_SOURCE_DIR}/tests/bigmemory.sh $<TARGET_FILE:arcbox>
+)

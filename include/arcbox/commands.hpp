@@ -40,6 +40,7 @@ int cmd_tag(Config& cfg,
             const std::vector<std::string>& tags,
             bool remove);
 int cmd_tags(Config& cfg);
+int cmd_memcheck(Config& cfg);
 int cmd_import(Config& cfg,
                const std::string& path,
                bool capture_now,
