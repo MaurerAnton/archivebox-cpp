@@ -68,7 +68,9 @@ The admission guard already shipped early, as part of v0.2:
       URL, and the blocklist entry that decided it, written both for the HTTP
       fetch and for the requests the browser asked for through interception;
       counted in `arcbox show`).
-- [ ] Localhost-only search/replay UI (already shipped in v0.2).
+- [x] Localhost-only search/replay UI (`arcbox serve`, shipped in v0.2: reads
+      the SQLite index, serves search plus the raw archive files, binds
+      127.0.0.1 by default).
 - [x] WACZ export (`arcbox wacz FILE`): datapackage.json, pages/pages.jsonl
       and the existing gzipped WARC members, streamed in 64 KiB pieces so an
       export cannot be an OOM source; zip64-size archives are refused.
