@@ -28,6 +28,7 @@ void usage() {
         << "  arcbox [--data DIR] export [--limit N] [--tag TAG] [--urls]\n"
         << "  arcbox [--data DIR] serve [--host HOST] [--port PORT]\n"
         << "  arcbox [--data DIR] daemon [--once] [--no-cgroup] [--no-block]\n"
+        << "  arcbox [--data DIR] wacz FILE [--limit N] [--tag TAG]\n"
         << "  arcbox [--data DIR] retry ID|all\n"
         << "  arcbox [--data DIR] recrawl [--older-than 30d] [--limit N]\n"
         << "  arcbox [--data DIR] prune --keep N [--older-than 90d] [--dry-run]\n"
@@ -378,6 +379,35 @@ int main(int argc, char** argv) {
             }
             return arcbox::cmd_import(cfg, path, capture_now, use_cgroup,
                                       use_blocklist);
+        }
+        if (command == "wacz") {
+            if (index >= args.size()) {
+                std::cerr << "arcbox: wacz needs an output file\n";
+                return 1;
+            }
+            const std::string output = args[index++];
+            int limit = 1000;
+            std::string tag;
+            while (index < args.size()) {
+                if (args[index] == "--limit") {
+                    std::string value;
+                    if (!take_value(args, index, value)) {
+                        std::cerr << "arcbox: --limit requires a value\n";
+                        return 1;
+                    }
+                    limit = parse_limit(value);
+                } else if (args[index] == "--tag") {
+                    if (!take_value(args, index, tag)) {
+                        std::cerr << "arcbox: --tag requires a value\n";
+                        return 1;
+                    }
+                } else {
+                    std::cerr << "arcbox: unknown wacz option: " << args[index]
+                              << "\n";
+                    return 1;
+                }
+            }
+            return arcbox::cmd_wacz(cfg, output, limit, tag);
         }
         if (command == "export") {
             int limit = 1000;

@@ -402,6 +402,45 @@ assert_contains "$RECRAWL_OUT" "recrawled 1 url(s)" "stale url is requeued"
 assert_contains "$("$BIN" --data "$RET_DATA" recrawl --older-than 1d)" \
     "nothing to recrawl" "url with pending work is not queued twice"
 
+# --- WACZ export ---
+WACZ_FILE="$DATA/export.wacz"
+assert_contains "$("$BIN" --data "$DATA" wacz "$WACZ_FILE" --tag smoke)" \
+    "wrote" "wacz export reports what it wrote"
+[[ -f "$WACZ_FILE" ]] || fail "wacz file missing"
+if ! python3 - "$WACZ_FILE" <<'PY'
+import json, sys, zipfile
+
+archive = zipfile.ZipFile(sys.argv[1])
+assert archive.testzip() is None, "crc check failed"
+names = archive.namelist()
+for required in ("datapackage.json", "pages/pages.jsonl"):
+    assert required in names, "missing " + required
+warcs = [n for n in names if n.startswith("archive/")]
+assert warcs, "no WARC members"
+
+package = json.loads(archive.read("datapackage.json"))
+assert package["profile"] == "data-package", package.get("profile")
+assert package["wacz_version"] == "1.1.1", package.get("wacz_version")
+assert any(r["path"].startswith("archive/") for r in package["resources"])
+
+pages = [json.loads(line)
+         for line in archive.read("pages/pages.jsonl").decode().splitlines()
+         if line.strip()]
+assert pages, "pages.jsonl is empty"
+for page in pages:
+    assert {"id", "url", "ts"} <= page.keys(), page
+PY
+then
+    fail "wacz archive did not validate"
+fi
+if "$BIN" --data "$DATA" wacz >/dev/null 2>&1; then
+    fail "wacz without an output file must refuse"
+fi
+"$BIN" --data "$DATA/empty" init >/dev/null
+assert_contains "$("$BIN" --data "$DATA/empty" wacz "$DATA/empty.wacz")" \
+    "nothing to export" "empty archive exports nothing"
+[[ ! -e "$DATA/empty.wacz" ]] || fail "an empty export should not leave a file"
+
 # --- headless browser rendering (skipped when no browser is installed) ---
 BROWSER=""
 for candidate in \

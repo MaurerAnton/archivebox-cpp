@@ -20,6 +20,7 @@ add_executable(arcbox
     src/capture_http.cpp
     src/metadata.cpp
     src/warc.cpp
+    src/wacz.cpp
     src/cgroup.cpp
     src/memory.cpp
     src/browser.cpp

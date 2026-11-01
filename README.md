@@ -331,6 +331,7 @@ arcbox daemon [--once] [--no-cgroup] [--no-block]
 arcbox retry ID|all
 arcbox recrawl [--older-than 30d] [--limit N]
 arcbox prune --keep N [--older-than 90d] [--dry-run]
+arcbox wacz FILE [--limit N] [--tag TAG]
 arcbox version
 ```
 
@@ -360,6 +361,28 @@ run, so an accidental bare `arcbox prune` cannot empty the archive.
 
 Durations accept a suffix — `45s`, `90m`, `12h`, `30d`, `4w` — and a bare
 number means days.
+
+
+### WACZ export
+
+`arcbox wacz archive.wacz` writes a [WACZ 1.1.1](https://specs.webrecorder.net/wacz/1.1.1/)
+bundle that other replay tools can read:
+
+```text
+datapackage.json     profile "data-package", wacz_version 1.1.1, resources
+pages/pages.jsonl    one {"id","url","title","ts"} line per exported snapshot
+archive/*.warc.gz    the WARC members already written at capture time
+```
+
+The WARCs go in as they are: they are gzipped already, so recompressing them
+would only spend CPU and memory for nothing. Everything is streamed in 64 KiB
+pieces — the writer holds two buffers and a zlib stream, never a whole member —
+so exporting a large archive cannot itself become an OOM source.
+
+Snapshots without a WARC file on disk are still listed in `pages/pages.jsonl`;
+their members are simply absent. Use `--tag`/`--limit` to export a slice. An
+archive that outgrows a plain zip is refused rather than written with offsets
+nobody can read (zip64 is not implemented), and the partial file is removed.
 
 ## Development
 

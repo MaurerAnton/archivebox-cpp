@@ -59,7 +59,9 @@ The admission guard already shipped early, as part of v0.2:
       a remote list on a schedule is still open.
 - [ ] Per-snapshot block decision log.
 - [ ] Localhost-only search/replay UI (already shipped in v0.2).
-- [ ] WACZ export.
+- [x] WACZ export (`arcbox wacz FILE`): datapackage.json, pages/pages.jsonl
+      and the existing gzipped WARC members, streamed in 64 KiB pieces so an
+      export cannot be an OOM source; zip64-size archives are refused.
 
 ## v0.6 — dedup and operations
 

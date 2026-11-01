@@ -19,6 +19,7 @@
 #include "arcbox/memory.hpp"
 #include "arcbox/metadata.hpp"
 #include "arcbox/util.hpp"
+#include "arcbox/wacz.hpp"
 #include "arcbox/warc.hpp"
 
 namespace arcbox {
@@ -476,6 +477,100 @@ int cmd_prune(Config& cfg,
 
     std::cout << (dry_run ? "would prune " : "pruned ") << removed
               << " snapshot(s), freed " << format_size(freed) << "\n";
+    return 0;
+}
+
+// WACZ wants an ISO timestamp per page; a queued snapshot has no finish time
+// yet, so the creation time stands in for it.
+std::string snapshot_timestamp(const Snapshot& snapshot) {
+    return snapshot.finished_at.empty() ? snapshot.created_at
+                                        : snapshot.finished_at;
+}
+
+std::string wacz_datapackage(const std::string& resources) {
+    std::ostringstream out;
+    out << "{\"profile\":\"data-package\",\"title\":\"arcbox export\","
+        << "\"software\":\"arcbox\",\"wacz_version\":\"1.1.1\","
+        << "\"created\":\"" << now_iso8601() << "\","
+        << "\"resources\":[" << resources << "]}";
+    return out.str();
+}
+
+int cmd_wacz(Config& cfg,
+             const std::string& output,
+             int limit,
+             const std::string& tag) {
+    cfg.ensure_dirs();
+    Db db(cfg.db_path());
+    db.migrate();
+
+    const std::vector<Snapshot> snapshots = db.list(limit, tag);
+    if (snapshots.empty()) {
+        std::cout << "nothing to export\n";
+        return 0;
+    }
+
+    std::ostringstream pages;
+    std::ostringstream resources;
+    resources << "{\"name\":\"pages\",\"path\":\"pages/pages.jsonl\","
+                 "\"format\":\"jsonl\",\"mediatype\":\"application/jsonl\"}";
+
+    ZipWriter zip(output);
+    if (!zip.ok()) {
+        return fail(zip.error());
+    }
+
+    std::size_t pages_written = 0;
+    std::size_t archives_written = 0;
+    int64_t archived_bytes = 0;
+    for (const Snapshot& snapshot : snapshots) {
+        const std::string captured = snapshot_timestamp(snapshot);
+        pages << "{\"id\":\"" << snapshot.id << "\",\"url\":\""
+              << json_escape(snapshot.url) << "\",\"title\":\""
+              << json_escape(snapshot.title) << "\",\"ts\":\""
+              << json_escape(captured) << "\"}\n";
+        ++pages_written;
+
+        // Already gzipped WARCs go in untouched: recompressing them costs CPU
+        // and memory for nothing.
+        if (snapshot.warc_path.empty()) {
+            continue;
+        }
+        std::error_code ec;
+        const std::filesystem::path source = cfg.resolve(snapshot.warc_path);
+        if (!std::filesystem::is_regular_file(source, ec) || ec) {
+            continue;
+        }
+        const uintmax_t size = std::filesystem::file_size(source, ec);
+        if (ec) {
+            continue;
+        }
+        const std::string name =
+            "archive/" + source.filename().string();
+        if (!zip.add_file(name, source, true)) {
+            return fail(zip.error());
+        }
+        ++archives_written;
+        archived_bytes += static_cast<int64_t>(size);
+        resources << ",{\"name\":\"" << json_escape(source.stem().string())
+                  << "\",\"path\":\"" << json_escape(name)
+                  << "\",\"format\":\"warc\",\"mediatype\":\"application/warc\""
+                  << ",\"bytes\":" << size << "}";
+    }
+
+    if (!zip.add_bytes("pages/pages.jsonl", pages.str()) ||
+        !zip.add_bytes("datapackage.json", wacz_datapackage(resources.str()))) {
+        return fail(zip.error());
+    }
+    if (!zip.close()) {
+        std::error_code ec;
+        std::filesystem::remove(output, ec);
+        return fail(zip.error());
+    }
+
+    std::cout << "wrote " << output << ": " << pages_written << " page(s), "
+              << archives_written << " archive(s), "
+              << format_size(archived_bytes) << "\n";
     return 0;
 }
 
