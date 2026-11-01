@@ -386,6 +386,15 @@ PY
 "$BIN" --data "$RET_DATA" add "http://127.0.0.1:$PORT/" >/dev/null
 "$BIN" --data "$RET_DATA" capture --no-cgroup --id 2 >/dev/null
 
+# Both captures are of the same unchanged page: the body has to be stored once.
+[[ "$RET_DATA/snapshots/1/body.bin" -ef "$RET_DATA/snapshots/2/body.bin" ]] ||
+    fail "identical bodies must share one content-addressed object"
+CAS_OBJECT="$(find "$RET_DATA/objects" -type f | head -1)"
+if [ -z "$CAS_OBJECT" ] ||
+    [ ! "$CAS_OBJECT" -ef "$RET_DATA/snapshots/1/body.bin" ]; then
+    fail "the content-addressed store must hold the shared body"
+fi
+
 assert_contains "$("$BIN" --data "$RET_DATA" recrawl --older-than 1d)" \
     "nothing to recrawl" "recent snapshots are not stale yet"
 if "$BIN" --data "$RET_DATA" prune >/dev/null 2>&1; then
@@ -406,6 +415,8 @@ PRUNE_OUT="$("$BIN" --data "$RET_DATA" prune --keep 1)"
 assert_contains "$PRUNE_OUT" "pruned 1 snapshot(s)" "keep=1 drops the older one"
 [[ ! -e "$RET_DATA/snapshots/1" ]] || fail "pruned artifacts should be gone"
 [[ -f "$RET_DATA/snapshots/2/body.bin" ]] || fail "kept snapshot stays intact"
+[[ -f "$CAS_OBJECT" ]] \
+    || fail "an object a snapshot still links must survive the reclaim"
 [[ "$(list_ids)" == "2" ]] || fail "pruned snapshot should leave the index"
 [[ "$(search_ids)" == "2" ]] \
     || fail "pruned snapshot should leave the search index"

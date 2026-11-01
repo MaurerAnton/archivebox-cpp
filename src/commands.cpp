@@ -81,6 +81,82 @@ static void note_block_decision(const Config& cfg, int64_t id,
     out.write(line.data(), static_cast<std::streamsize>(line.size()));
 }
 
+// Bodies go into a content-addressed store: the bytes are written once under
+// objects/ and each snapshot keeps its own snapshots/<id>/body.bin as another
+// link to the very same inode. Nothing that reads an archive has to change, a
+// second capture of identical content costs one directory entry, and deleting
+// a snapshot can never pull the bytes out from under a sibling that still uses
+// them.
+static bool store_body_cas(const Config& cfg, const std::string& relative_body,
+                           const std::string& body, const std::string& sha256,
+                           std::string& error) {
+    if (sha256.size() < 4) {
+        error = "cannot address a body without its digest";
+        return false;
+    }
+    const std::filesystem::path object =
+        cfg.objects_dir() / sha256.substr(0, 2) / sha256;
+    const std::filesystem::path link = cfg.resolve(relative_body);
+    std::error_code ec;
+    std::filesystem::create_directories(link.parent_path(), ec);
+    std::filesystem::remove(link, ec);
+
+    if (!std::filesystem::exists(object)) {
+        if (!write_text_file(object, body, error)) {
+            return false;
+        }
+    }
+    ec.clear();
+    std::filesystem::create_hard_link(object, link, ec);
+    if (!ec) {
+        return true;
+    }
+    // A filesystem without hard links (or a store on another device) must not
+    // lose the capture: fall back to its own copy.
+    return write_text_file(link, body, error);
+}
+
+// Once no snapshot links an object any more, the bytes are dead weight. The
+// link count is the truth here: an object referenced anywhere still has at
+// least two names.
+static int64_t sweep_objects(const Config& cfg) {
+    const std::filesystem::path objects = cfg.objects_dir();
+    std::error_code ec;
+    if (!std::filesystem::exists(objects, ec)) {
+        return 0;
+    }
+    int64_t reclaimed = 0;
+    std::error_code walk_error;
+    for (std::filesystem::recursive_directory_iterator it(objects, walk_error), end;
+         it != end; it.increment(walk_error)) {
+        if (walk_error) {
+            break;
+        }
+        if (!it->is_regular_file()) {
+            continue;
+        }
+        std::error_code count_error;
+        if (it->hard_link_count(count_error) > 1 && !count_error) {
+            continue;
+        }
+        const uintmax_t size = it->file_size(ec);
+        std::filesystem::remove(it->path(), ec);
+        if (!ec) {
+            reclaimed += static_cast<int64_t>(size);
+        }
+    }
+    for (std::filesystem::recursive_directory_iterator it(objects, walk_error), end;
+         it != end; it.increment(walk_error)) {
+        if (walk_error) {
+            break;
+        }
+        if (it->is_directory() && std::filesystem::is_empty(it->path(), ec)) {
+            std::filesystem::remove(it->path(), ec);
+        }
+    }
+    return reclaimed;
+}
+
 static bool looks_like_html(const std::string& content_type,
                             const std::string& body) {
     std::string type = lower(content_type);
@@ -149,14 +225,14 @@ static int worker_capture(Config& cfg,
         const std::string metadata_relative =
             "snapshots/" + std::to_string(id) + "/metadata.json";
 
+        update.sha256 = sha256_hex(capture.body);
         std::string write_error;
-        if (!write_text_file(cfg.resolve(body_relative), capture.body,
-                             write_error)) {
+        if (!store_body_cas(cfg, body_relative, capture.body, update.sha256,
+                            write_error)) {
             update.status = "failed";
             update.error = write_error;
         } else {
             update.body_path = body_relative;
-            update.sha256 = sha256_hex(capture.body);
         }
 
         std::string headers_text = capture.status_line;
@@ -504,6 +580,13 @@ int cmd_prune(Config& cfg,
 
     std::cout << (dry_run ? "would prune " : "pruned ") << removed
               << " snapshot(s), freed " << format_size(freed) << "\n";
+    if (!dry_run && removed > 0) {
+        const int64_t objects = sweep_objects(cfg);
+        if (objects > 0) {
+            std::cout << "reclaimed " << format_size(objects)
+                      << " of bodies no snapshot links any more\n";
+        }
+    }
     return 0;
 }
 

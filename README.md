@@ -334,7 +334,9 @@ the page.
 │       ├── headers.txt    # response status line and headers
 │       ├── blocked.txt    # requests refused here, with stage and rule
 │       └── metadata.json  # capture metadata and extracted fields
-└── objects/               # reserved for future CAS dedup
+├── objects/
+│   └── 57/57b8c926…       # content-addressed bodies, once per digest
+
 ```
 
 Every refusal is written to `snapshots/<id>/blocked.txt` as tab-separated
@@ -346,6 +348,14 @@ snapshot that "has no image" says why instead of looking incomplete:
 http    https://ads.example/banner      ads.example
 render  https://ads.example/tracker.gif ads.example
 ```
+
+Bodies are content-addressed: a capture's bytes are written once under
+`objects/<sha256 prefix>/<sha256>` and `snapshots/<id>/body.bin` is another link
+to the very same file, so re-capturing an unchanged page costs a directory
+entry instead of another copy, and removing one snapshot cannot pull the bytes
+out from under a sibling that still uses them. `arcbox prune` reclaims the
+objects nothing links any more (the previous body of a URL whose older
+snapshots were pruned, for instance).
 
 SQLite uses WAL mode. The queue is the set of `snapshots` rows with status
 `queued`. A capture moves through `queued → running → ok|partial|failed|blocked`.

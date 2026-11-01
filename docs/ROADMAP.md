@@ -77,7 +77,11 @@ The admission guard already shipped early, as part of v0.2:
 
 ## v0.6 — dedup and operations
 
-- [ ] Content-addressed storage for bodies/WARCs.
+- [x] Content-addressed storage for bodies (bodies live once under
+      `objects/<prefix>/<sha256>`, each snapshot hard-links its own
+      `body.bin` to it, so identical captures share the bytes and a removed
+      snapshot cannot orphan its siblings; `arcbox prune` reclaims objects
+      that nothing links any more). WARCs stay per-snapshot.
 - [x] Scheduled recrawls and retention policy (`arcbox recrawl`, `arcbox prune`
       --keep/--older-than/--dry-run); daemon-side scheduling is still manual.
 - [ ] Browser extension / share target (optional).
