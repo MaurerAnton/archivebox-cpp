@@ -84,7 +84,11 @@ The admission guard already shipped early, as part of v0.2:
       that nothing links any more). WARCs stay per-snapshot.
 - [x] Scheduled recrawls and retention policy (`arcbox recrawl`, `arcbox prune`
       --keep/--older-than/--dry-run); daemon-side scheduling is still manual.
-- [ ] Browser extension / share target (optional).
+- [x] Browser extension / share target (`POST /add` on the local UI: a `url`
+      field or free text whose first link is queued, `GET /add` as a form, a
+      bookmarklet covers the browser side; 64 KiB request cap, no auth, refused
+      with 400 when the share holds no link). A real extension package is not
+      planned.
 - [ ] Packaging for Arch (`PKGBUILD`) and a systemd user unit.
 
 ## Non-goals

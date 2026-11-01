@@ -130,9 +130,29 @@ arcbox serve
 arcbox serve --host 127.0.0.1 --port 8090
 ```
 
+### Sharing a page to the archive
+
+`POST /add` is the one write route: send a form field named `url`, or `text`
+with some prose around the link (what phones and browsers actually share) and
+it is queued like `arcbox add`. `GET /add` serves the same thing as a small
+form, and a bookmarklet is enough to get a button in any browser — no extension
+needed:
+
+```javascript
+javascript:(function(){fetch('http://127.0.0.1:8080/add',{method:'POST',
+headers:{'Content-Type':'application/x-www-form-urlencoded'},
+body:'url='+encodeURIComponent(location.href)}).then(r=>alert(r.ok?'queued':'failed'))})()
+```
+
+Shares are refused with `400` when nothing in them looks like an http(s) link,
+request bodies are capped at 64 KiB, and — like the rest of the UI — the route
+has no authentication, so it is only ever meant to be reachable from the same
+machine (or over a tunnel you trust).
+
 There is **no authentication**. Binding to anything other than localhost is
 supported but discouraged; if you do it, put the service behind a trusted
-reverse proxy. The UI is read-only: add, capture, tag, and import remain CLI
+reverse proxy. Adding apart, the UI is read-only: capture, tag, and import
+remain CLI
 operations. Captured HTML is served as a download (`Content-Disposition:
 attachment`), not rendered inline; the UI shows extracted text and links instead.
 

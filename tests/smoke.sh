@@ -263,6 +263,21 @@ curl -fsS "$WEB_BASE/snapshot/1/warc" -o "$DATA/web.warc.gz"
 gzip -dc "$DATA/web.warc.gz" | grep -Fq "WARC-Type: response" \
     || fail "web WARC route returned an invalid WARC"
 
+# The UI is also the share target: a POST with a URL is queued, prose that only
+# mentions a link works too, and a share without any link is refused.
+SHARE_URL="http://127.0.0.1:$PORT/shared-by-hand"
+assert_contains "$(curl -fsS -X POST -d "url=$SHARE_URL" "$WEB_BASE/add")" \
+    "Queued as" "web UI queues a shared URL"
+assert_contains "$(curl -fsS -X POST --data-urlencode \
+    "text=look at https://shared.example/story now" "$WEB_BASE/add")" \
+    "Queued as" "web UI queues the link inside shared text"
+assert_contains "$(run_arcbox list)" "$SHARE_URL" "shared URL reached the queue"
+assert_contains "$(run_arcbox list)" "https://shared.example/story" \
+    "shared text reached the queue"
+SHARE_BAD="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+    -d "text=prose without a link" "$WEB_BASE/add")"
+[[ "$SHARE_BAD" == "400" ]] || fail "a share without a link must be refused"
+
 HEAD_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' -I "$WEB_BASE/snapshot/1/body")"
 [[ "$HEAD_STATUS" == "200" ]] || fail "HEAD /snapshot/1/body returned $HEAD_STATUS"
 MISSING_STATUS="$(curl -sS -o /dev/null -w '%{http_code}' "$WEB_BASE/snapshot/999")"

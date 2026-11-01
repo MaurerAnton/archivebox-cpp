@@ -7,12 +7,15 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <cctype>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <algorithm>
 #include <map>
 #include <sstream>
 #include <string>
@@ -37,7 +40,33 @@ struct Request {
     std::string target;
     std::string path;
     std::string query;
+    std::string body;
 };
+
+// Enough for a submitted URL or a short shared snippet, far below anything
+// that could make this server noticeable in memory.
+constexpr std::size_t kMaxBodyBytes = 64 * 1024;
+
+std::size_t declared_content_length(const std::string& headers) {
+    const std::string lowered = lower(headers);
+    std::size_t at = lowered.find("content-length:");
+    if (at == std::string::npos) {
+        return 0;
+    }
+    at += std::string("content-length:").size();
+    while (at < lowered.size() && (lowered[at] == ' ' || lowered[at] == '\t')) {
+        ++at;
+    }
+    std::size_t digits = 0;
+    while (at < lowered.size() && lowered[at] >= '0' && lowered[at] <= '9') {
+        digits = digits * 10 + static_cast<std::size_t>(lowered[at] - '0');
+        if (digits > kMaxBodyBytes) {
+            return kMaxBodyBytes;
+        }
+        ++at;
+    }
+    return digits;
+}
 
 std::string reason_phrase(int status) {
     switch (status) {
@@ -226,6 +255,35 @@ bool read_request(int fd, Request& request) {
         }
     }
 
+    const std::size_t header_split = raw.find("\r\n\r\n");
+    const std::size_t skip =
+        header_split == std::string::npos ? 2 : 4;
+    const std::size_t head_end = header_split == std::string::npos
+                                     ? raw.find("\n\n")
+                                     : header_split;
+    if (head_end != std::string::npos) {
+        const std::size_t body_start = head_end + skip;
+        const std::size_t wanted =
+            std::min<std::size_t>(declared_content_length(raw.substr(0, head_end)),
+                                  kMaxBodyBytes);
+        while (raw.size() - body_start < wanted) {
+            ssize_t count = recv(fd, buffer, sizeof(buffer), 0);
+            if (count < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                break;
+            }
+            if (count == 0) {
+                break;
+            }
+            raw.append(buffer, static_cast<std::size_t>(count));
+        }
+        if (raw.size() > body_start) {
+            request.body = raw.substr(body_start, wanted);
+        }
+    }
+
     std::size_t line_end = raw.find("\r\n");
     if (line_end == std::string::npos) {
         line_end = raw.find('\n');
@@ -267,6 +325,72 @@ bool read_request(int fd, Request& request) {
         request.query = request.target.substr(question + 1);
     }
     return true;
+}
+
+// Form fields of a share target: Android posts `url`, browsers commonly send
+// only `text` with some prose around it, so both are accepted and the first
+// http(s) link of a free-text share wins.
+std::string form_field(const std::string& body, const std::string& name) {
+    std::size_t at = 0;
+    while (at < body.size()) {
+        std::size_t amp = body.find('&', at);
+        const std::string pair =
+            body.substr(at, amp == std::string::npos ? std::string::npos
+                                                     : amp - at);
+        const std::size_t equals = pair.find('=');
+        if (equals != std::string::npos &&
+            url_decode(pair.substr(0, equals), true) == name) {
+            return url_decode(pair.substr(equals + 1), true);
+        }
+        if (amp == std::string::npos) {
+            break;
+        }
+        at = amp + 1;
+    }
+    return std::string();
+}
+
+std::string first_url(const std::string& text) {
+    for (int pass = 0; pass < 2; ++pass) {
+        const std::string scheme = pass == 0 ? "https://" : "http://";
+        std::size_t at = 0;
+        while ((at = text.find(scheme, at)) != std::string::npos) {
+            std::size_t end = at;
+            while (end < text.size() && !std::isspace(
+                       static_cast<unsigned char>(text[end])) &&
+                   text[end] != '"' && text[end] != '<' && text[end] != '>') {
+                ++end;
+            }
+            const std::string candidate = text.substr(at, end - at);
+            if (!url_host(candidate).empty()) {
+                return candidate;
+            }
+            at = end > at ? end : at + scheme.size();
+        }
+    }
+    return std::string();
+}
+
+std::string shared_url(const std::string& body) {
+    std::string direct = trim(form_field(body, "url"));
+    if (direct.empty()) {
+        direct = trim(form_field(body, "text"));
+    }
+    if (direct.empty()) {
+        return std::string();
+    }
+    const std::string found = first_url(direct);
+    if (!found.empty()) {
+        return url_canonicalize(found);
+    }
+    // A typed-in address that lost its scheme on the way is still obvious
+    // enough to queue; anything else is prose and has nothing to archive.
+    const std::size_t dot = direct.find('.');
+    if (dot != std::string::npos && dot > 0 && dot < direct.size() - 3 &&
+        direct.find(' ') == std::string::npos) {
+        return url_canonicalize("https://" + direct);
+    }
+    return std::string();
 }
 
 std::string css() {
@@ -541,6 +665,42 @@ std::string read_prefix(const std::filesystem::path& path,
     input.read(data.data(), static_cast<std::streamsize>(max_bytes));
     data.resize(static_cast<std::size_t>(input.gcount()));
     return data;
+}
+
+std::string add_form_page(const std::string& message = {},
+                          const std::string& detail = {}) {
+    std::ostringstream out;
+    out << page_open("Add a page", "Add a page")
+        << "<div class=\"card\"><form method=\"post\" action=\"/add\">"
+        << "<label for=\"url\">URL or shared text</label>"
+        << "<input id=\"url\" name=\"url\" type=\"text\" "
+           "placeholder=\"https://example.com/story\" autofocus>"
+        << "<button type=\"submit\">Queue it</button></form>"
+        << "<p class=\"small\">Any http(s) link is queued as-is; free text is "
+           "searched for its first link, so a plain share works too.</p></div>";
+    if (!message.empty()) {
+        out << "<div class=\"card " << (detail.empty() ? "ok" : "failed")
+            << "\">" << html_escape(message);
+        if (!detail.empty()) {
+            out << " <span class=\"small\">" << html_escape(detail) << "</span>";
+        }
+        out << "</div>";
+    }
+    out << "<p><a href=\"/\">Back to the archive</a></p>" << page_close();
+    return out.str();
+}
+
+std::string queued_page(int64_t id, const std::string& url) {
+    std::ostringstream out;
+    out << page_open("Queued", "Queued")
+        << "<div class=\"card ok\">Queued as <a href=\"/snapshot/" << id
+        << "\">#" << id << "</a>: " << html_escape(url) << "</div>"
+        << "<form method=\"post\" action=\"/add\">"
+        << "<input name=\"url\" type=\"text\" "
+           "placeholder=\"https://example.com/next\" autofocus>"
+        << "<button type=\"submit\">Queue another</button></form>"
+        << "<p><a href=\"/\">Back to the archive</a></p>" << page_close();
+    return out.str();
 }
 
 std::string not_found_page(const std::string& message) {
@@ -834,12 +994,41 @@ void handle_client(int fd, Db& db, Config& cfg) {
         respond_text(fd, 400, "Bad request\n");
         return;
     }
-    if (request.method != "GET" && request.method != "HEAD") {
+    if (request.method != "GET" && request.method != "HEAD" &&
+        request.method != "POST") {
+        respond(fd, 405, "text/plain; charset=utf-8", "Method not allowed\n",
+                {"Allow: GET, HEAD, POST"});
+        return;
+    }
+    bool head = request.method == "HEAD";
+
+    // Adding is a write and stays a POST, so nothing that merely follows links
+    // can change the archive. This is what a browser share target talks to.
+    if (request.path == "/add") {
+        if (head || request.method == "GET") {
+            respond_html(fd, 200, add_form_page(), false);
+            return;
+        }
+        const std::string url = shared_url(request.body);
+        if (url.empty() || url_host(url).empty() ||
+            (!starts_with(url, "http://") && !starts_with(url, "https://"))) {
+            respond_html(fd, 400,
+                         add_form_page("That share carried no http(s) link.",
+                                       request.body.empty()
+                                           ? "empty request"
+                                           : "nothing looked like a URL"),
+                         false);
+            return;
+        }
+        const int64_t id = db.enqueue(url, 0);
+        respond_html(fd, 200, queued_page(id, url), false);
+        return;
+    }
+    if (request.method == "POST") {
         respond(fd, 405, "text/plain; charset=utf-8", "Method not allowed\n",
                 {"Allow: GET, HEAD"});
         return;
     }
-    bool head = request.method == "HEAD";
 
     if (request.path == "/healthz") {
         respond_text(fd, 200, "ok\n", head);
