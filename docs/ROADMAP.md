@@ -64,7 +64,10 @@ The admission guard already shipped early, as part of v0.2:
       `ARCBOX_RENDER_INTERCEPT=0` to opt out).
 - [x] Import hosts/ABP lists (`arcbox blocklist import`); fetching and updating
       a remote list on a schedule is still open.
-- [ ] Per-snapshot block decision log.
+- [x] Per-snapshot block decision log (`snapshots/<id>/blocked.txt`: stage,
+      URL, and the blocklist entry that decided it, written both for the HTTP
+      fetch and for the requests the browser asked for through interception;
+      counted in `arcbox show`).
 - [ ] Localhost-only search/replay UI (already shipped in v0.2).
 - [x] WACZ export (`arcbox wacz FILE`): datapackage.json, pages/pages.jsonl
       and the existing gzipped WARC members, streamed in 64 KiB pieces so an

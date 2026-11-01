@@ -124,26 +124,6 @@ bool millis_left(Clock::time_point deadline, int& out) {
     return true;
 }
 
-bool read_until_eof(int fd, std::string& out, int timeout_ms,
-                    std::string& error) {
-    const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);
-    bool closed = false;
-    while (!closed) {
-        int slice = 0;
-        if (!millis_left(deadline, slice)) {
-            error = "read timed out";
-            return false;
-        }
-        if (!read_some(fd, out, slice, error, closed)) {
-            return false;
-        }
-        if (out.size() > kMaxHttpResponse) {
-            break;
-        }
-    }
-    return true;
-}
-
 bool read_until(int fd, std::string& out, const std::string& terminator,
                 int timeout_ms, std::string& error) {
     const auto deadline = Clock::now() + std::chrono::milliseconds(timeout_ms);

@@ -58,6 +58,29 @@ static bool write_text_file(const std::filesystem::path& path,
     return true;
 }
 
+// A refusal is easy to lose: afterwards the archive just looks like it never
+// saw the content. Keeping the decision beside the artifacts says which stage
+// said no (the HTTP fetch, or the browser's own request) and which list entry
+// decided it.
+static void note_block_decision(const Config& cfg, int64_t id,
+                                const std::string& stage,
+                                const std::string& url,
+                                const Adblock& adblock) {
+    const std::string relative =
+        "snapshots/" + std::to_string(id) + "/blocked.txt";
+    const std::string line =
+        stage + "\t" + url + "\t" + adblock.matched_rule(url) + "\n";
+    const std::filesystem::path path = cfg.resolve(relative);
+    std::filesystem::create_directories(path.parent_path());
+    std::ofstream out(path, std::ios::app | std::ios::binary);
+    if (!out) {
+        std::cerr << "arcbox: cannot append to the block decision log: "
+                  << path.string() << "\n";
+        return;
+    }
+    out.write(line.data(), static_cast<std::streamsize>(line.size()));
+}
+
 static bool looks_like_html(const std::string& content_type,
                             const std::string& body) {
     std::string type = lower(content_type);
@@ -98,6 +121,7 @@ static int worker_capture(Config& cfg,
         CaptureUpdate blocked;
         blocked.status = "blocked";
         blocked.error = "blocked by host blocklist";
+        note_block_decision(cfg, id, "http", snapshot->url, adblock);
         db.finish(id, blocked);
         std::cout << "#" << id << " blocked " << snapshot->url << "\n";
         return 4;
@@ -226,6 +250,9 @@ static int worker_capture(Config& cfg,
                 update.pdf_path = rendered.pdf_path;
                 if (!rendered.ok && !rendered.error.empty()) {
                     note_issue(update, "render: " + rendered.error);
+                }
+                for (const std::string& url : rendered.blocked_urls) {
+                    note_block_decision(cfg, id, "render", url, adblock);
                 }
             }
         }
@@ -716,6 +743,20 @@ int cmd_show(Config& cfg, int64_t id) {
     }
     if (!snapshot->pdf_path.empty()) {
         std::cout << "pdf:         " << snapshot->pdf_path << "\n";
+    }
+    const std::string decision_relative =
+        "snapshots/" + std::to_string(snapshot->id) + "/blocked.txt";
+    std::ifstream decisions(cfg.resolve(decision_relative));
+    if (decisions) {
+        std::size_t refusals = 0;
+        std::string line;
+        while (std::getline(decisions, line)) {
+            if (!line.empty()) {
+                ++refusals;
+            }
+        }
+        std::cout << "blocked:     " << refusals << " request(s), "
+                  << decision_relative << "\n";
     }
     std::cout << "content:     " << snapshot->content_type << "\n"
               << "title:       " << snapshot->title << "\n";

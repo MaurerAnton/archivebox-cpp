@@ -311,6 +311,9 @@ Blocked hosts therefore never reach the network, from either side: the HTTP
 capture refuses them, Chrome's own requests are intercepted over DevTools,
 and elements pointing at them are dropped from the rendered DOM.
 
+`arcbox show <id>` reports how many requests were refused and where the log
+lives.
+
 It is still a request-level guard, not a full in-page ad blocker: cosmetic
 filter rules (`##`-style selectors) and redirect-target inspection are not
 implemented, so an ad served from the page's own host is archived as part of
@@ -329,8 +332,19 @@ the page.
 │       ├── body.bin       # raw response body
 │       ├── text.txt       # extracted text (HTML only)
 │       ├── headers.txt    # response status line and headers
+│       ├── blocked.txt    # requests refused here, with stage and rule
 │       └── metadata.json  # capture metadata and extracted fields
 └── objects/               # reserved for future CAS dedup
+```
+
+Every refusal is written to `snapshots/<id>/blocked.txt` as tab-separated
+columns — stage (`http` for the fetch itself, `render` for what the browser
+asked for on its own), URL, and the blocklist entry that decided it — so a
+snapshot that "has no image" says why instead of looking incomplete:
+
+```text
+http    https://ads.example/banner      ads.example
+render  https://ads.example/tracker.gif ads.example
 ```
 
 SQLite uses WAL mode. The queue is the set of `snapshots` rows with status

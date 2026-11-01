@@ -494,6 +494,7 @@ RenderResult render_page(const Config& cfg,
                           std::to_string(outcome.html.size()) + " B, png " +
                           std::to_string(outcome.screenshot_png.size()) +
                           " B, error: " + outcome.error);
+                result.blocked_urls = outcome.blocked_urls;
                 if (result.rendered_html_path.empty() &&
                     result.screenshot_path.empty() && result.pdf_path.empty()) {
                     result.error = outcome.error.empty() ? "devtools render"

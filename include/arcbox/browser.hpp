@@ -39,6 +39,8 @@ struct RenderResult {
     std::string screenshot_path;
     std::string pdf_path;
     std::string error;
+    // Request URLs the browser wanted and interception refused.
+    std::vector<std::string> blocked_urls;
 };
 
 // First usable headless browser, or an empty string when none is installed.

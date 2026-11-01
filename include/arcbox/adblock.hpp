@@ -25,6 +25,10 @@ public:
     bool blocked(const std::string& url) const;
     std::size_t rules() const;
 
+    // The list entry that decided a URL - empty when nothing matched. Lets a
+    // refusal name its rule instead of leaving the reader to guess.
+    std::string matched_rule(const std::string& url) const;
+
     // Domains to point at ~NOTFOUND inside a rendering browser, so ads cannot
     // be fetched by Chrome itself. Mirrors blocked() while skipping exceptions
     // and the page's own domain (and its parents).

@@ -99,6 +99,23 @@ bool Adblock::matches(const std::unordered_set<std::string>& set,
     }
 }
 
+std::string Adblock::matched_rule(const std::string& url) const {
+    std::string candidate = url_host(url);
+    if (candidate.empty() || matches(exceptions_, candidate)) {
+        return "";
+    }
+    while (true) {
+        if (domains_.count(candidate)) {
+            return candidate;
+        }
+        const std::size_t dot = candidate.find('.');
+        if (dot == std::string::npos) {
+            return "";
+        }
+        candidate = candidate.substr(dot + 1);
+    }
+}
+
 bool Adblock::blocked(const std::string& url) const {
     const std::string host = url_host(url);
     if (host.empty()) {

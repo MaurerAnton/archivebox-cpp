@@ -338,6 +338,28 @@ IMPORT_AGAIN="$(run_arcbox blocklist import "$BLOCKLIST_SRC")"
 assert_contains "$IMPORT_AGAIN" "imported 0 new rules" \
     "importing twice is idempotent"
 
+# --- per-snapshot block decision log ---
+DECISION_DATA="$DATA/decision"
+"$BIN" --data "$DECISION_DATA" init >/dev/null
+printf '||ads.example^\n' >"$DECISION_DATA/blocklist.txt"
+"$BIN" --data "$DECISION_DATA" add "http://ads.example/banner" >/dev/null
+# Capture exits 4 for a refused URL, which is a policy decision, not a failure.
+"$BIN" --data "$DECISION_DATA" capture --no-cgroup --id 1 >/dev/null 2>&1 || true
+DECISION_SHOW="$("$BIN" --data "$DECISION_DATA" show 1)"
+assert_contains "$DECISION_SHOW" "status:      blocked" \
+    "blocklisted host is refused before any fetch"
+assert_contains "$DECISION_SHOW" "blocked:     1 request(s)" \
+    "show counts the refusals recorded for a snapshot"
+DECISION_LOG="$DECISION_DATA/snapshots/1/blocked.txt"
+if [ ! -f "$DECISION_LOG" ]; then
+    fail "a refused snapshot must keep a decision log"
+fi
+if ! awk -F'\t' '$1=="http" && $3=="ads.example" && $2 ~ /ads\.example/' \
+    "$DECISION_LOG" | grep -q .; then
+    echo "decision log must name the stage, the URL and the rule" >&2
+    exit 1
+fi
+
 # --- scheduled recrawl and retention ---
 RET_DATA="$DATA/retention"
 list_ids() {
@@ -555,6 +577,16 @@ PY
     # this doubles as the check that interception was really used.
     if grep -Fq 'pixel.png' <<<"$BLOCKED_DOM"; then
         echo "interception left an element pointing at a blocked host in the DOM" >&2
+        exit 1
+    fi
+    # Whatever the browser asked for on its own lands in the same log with the
+    # render stage. The element may be stripped before a request is made at all,
+    # so this only has to hold when interception actually refused something.
+    BLOCKED_LOG="$BLOCKED_DATA/snapshots/1/blocked.txt"
+    if [ -f "$BLOCKED_LOG" ] &&
+        ! awk -F'\t' '$1=="render" && $3=="localhost"' "$BLOCKED_LOG" |
+        grep -q .; then
+        echo "a request refused inside the browser must be logged with its stage" >&2
         exit 1
     fi
 
