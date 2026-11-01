@@ -312,6 +312,32 @@ assert_contains "$RETRY_BACK" "requeued 1 snapshot(s)" "retry requeues work"
 "$BIN" --data "$GIVEUP_DATA" list | grep -Fq "queued" \
     || fail "retry should put the snapshot back in the queue"
 
+# --- ad blocking: blocklist rules and in-browser resolver rules ---
+assert_contains "$(run_arcbox blocklist check http://example.org/)" \
+    "allowed:" "unknown host is not blocked"
+
+BLOCKLIST_SRC="$DATA/abp-source.txt"
+cat >"$BLOCKLIST_SRC" <<'EOF'
+[Adblock Plus 2.0]
+||ads.example^
+0.0.0.0 tracker.example
+@@news.example
+EOF
+IMPORT_OUT="$(run_arcbox blocklist import "$BLOCKLIST_SRC")"
+assert_contains "$IMPORT_OUT" "imported 3 new rules" \
+    "blocklist import adds ABP and hosts-file domains"
+assert_contains "$(run_arcbox blocklist check http://sub.ads.example/banner)" \
+    "blocked:" "subdomain of a blocked host is blocked"
+assert_contains "$(run_arcbox blocklist check https://tracker.example/pixel)" \
+    "blocked:" "hosts-file rule matches"
+assert_contains "$(run_arcbox blocklist check https://news.example/story)" \
+    "allowed:" "exception wins over the block rule"
+assert_contains "$(run_arcbox blocklist check http://localhost/)" \
+    "allowed:" "unlisted host stays allowed"
+IMPORT_AGAIN="$(run_arcbox blocklist import "$BLOCKLIST_SRC")"
+assert_contains "$IMPORT_AGAIN" "imported 0 new rules" \
+    "importing twice is idempotent"
+
 # --- headless browser rendering (skipped when no browser is installed) ---
 BROWSER=""
 for candidate in \
@@ -387,6 +413,53 @@ PY
     if printf '%s\n' "$SIZE_SHOW" | grep -q "^rendered:"; then
         fail "oversized source must not produce a rendered DOM"
     fi
+
+    # In-browser ad blocking: Chrome fetches subresources on its own, so the
+    # blocklist has to reach it as resolver rules. The document lives on
+    # 127.0.0.1 while its image comes from a blocked host.
+    cat >"$SITE/adblock-probe.html" <<HTML
+<!doctype html>
+<html><head><title>Adblock probe</title></head>
+<body><h1>Probe</h1>
+<img src="http://localhost:$PORT/pixel.png" onload="document.body.setAttribute('data-img','loaded')">
+</body></html>
+HTML
+    python3 - "$SITE/pixel.png" <<'PY'
+import base64, sys
+open(sys.argv[1], "wb").write(base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))
+PY
+
+    BLOCKED_DATA="$DATA/adblock-render"
+    mkdir -p "$BLOCKED_DATA"
+    printf 'localhost\n' >"$BLOCKED_DATA/blocklist.txt"
+    "$BIN" --data "$BLOCKED_DATA" init >/dev/null
+    "$BIN" --data "$BLOCKED_DATA" \
+        add "http://127.0.0.1:$PORT/adblock-probe.html" >/dev/null
+    ARCBOX_RENDER=1 ARCBOX_MIN_MEM_AVAILABLE_KB=300000 \
+        ARCBOX_RENDER_FULL_MB=200 ARCBOX_BROWSER="$BROWSER" \
+        "$BIN" --data "$BLOCKED_DATA" daemon --once --no-cgroup \
+        >/dev/null 2>"$DATA/adblock-render.log"
+    BLOCKED_DOM="$(cat "$BLOCKED_DATA/snapshots/1/rendered.html" 2>/dev/null)"
+    assert_contains "$BLOCKED_DOM" "Adblock probe" "probe page rendered"
+    if grep -Fq 'data-img="loaded"' <<<"$BLOCKED_DOM"; then
+        echo "Chrome fetched a subresource from a blocked host" >&2
+        exit 1
+    fi
+
+    # Control: the same image does load without the blocklist entry, so the
+    # check above tests blocking rather than a broken page.
+    CONTROL_DATA="$DATA/adblock-control"
+    "$BIN" --data "$CONTROL_DATA" init >/dev/null
+    "$BIN" --data "$CONTROL_DATA" \
+        add "http://127.0.0.1:$PORT/adblock-probe.html" >/dev/null
+    ARCBOX_RENDER=1 ARCBOX_MIN_MEM_AVAILABLE_KB=300000 \
+        ARCBOX_RENDER_FULL_MB=200 ARCBOX_BROWSER="$BROWSER" \
+        "$BIN" --data "$CONTROL_DATA" daemon --once --no-cgroup \
+        >/dev/null 2>"$DATA/adblock-control.log"
+    CONTROL_DOM="$(cat "$CONTROL_DATA/snapshots/1/rendered.html" 2>/dev/null)"
+    assert_contains "$CONTROL_DOM" 'data-img="loaded"' \
+        "control render loads the unblocked image"
 
     echo "browser rendering checked with $BROWSER"
 else

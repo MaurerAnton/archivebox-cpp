@@ -29,6 +29,8 @@ void usage() {
         << "  arcbox [--data DIR] serve [--host HOST] [--port PORT]\n"
         << "  arcbox [--data DIR] daemon [--once] [--no-cgroup] [--no-block]\n"
         << "  arcbox [--data DIR] retry ID|all\n"
+        << "  arcbox [--data DIR] blocklist check URL\n"
+        << "  arcbox [--data DIR] blocklist import FILE\n"
         << "  arcbox version\n\n"
         << "Environment:\n"
         << "  ARCBOX_DATA            data directory (default ~/.local/share/arcbox)\n"
@@ -488,6 +490,31 @@ int main(int argc, char** argv) {
                 return 1;
             }
             return arcbox::cmd_retry(cfg, target);
+        }
+        if (command == "blocklist") {
+            if (index >= args.size()) {
+                std::cerr << "arcbox: blocklist requires 'check URL' or "
+                             "'import FILE'\n";
+                return 1;
+            }
+            const std::string action = args[index++];
+            if (action == "check") {
+                if (index >= args.size()) {
+                    std::cerr << "arcbox: blocklist check requires a URL\n";
+                    return 1;
+                }
+                return arcbox::cmd_blocklist_check(cfg, args[index]);
+            }
+            if (action == "import") {
+                if (index >= args.size()) {
+                    std::cerr << "arcbox: blocklist import requires a file\n";
+                    return 1;
+                }
+                return arcbox::cmd_blocklist_import(cfg, args[index]);
+            }
+            std::cerr << "arcbox: unknown blocklist action: " << action
+                      << "\n";
+            return 1;
         }
         if (command == "__worker") {
             int64_t id = 0;

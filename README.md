@@ -43,7 +43,11 @@ Target machine: 8 GB RAM, Arch Linux, systemd, cgroups v2.
   pages, text previews, outgoing links, and raw-file downloads.
 - `arcbox daemon [--once]` — process the queue sequentially.
 - Host-level ad blocking before a request, using a hosts/ABP-style domain
-  blocklist.
+  blocklist, and the same blocklist is handed to the rendering browser as
+  `--host-resolver-rules`, so Chrome cannot fetch blocked subresources itself.
+- `arcbox blocklist check URL` — see whether a URL would be blocked.
+- `arcbox blocklist import FILE` — merge an ABP or hosts list into the
+  blocklist, skipping duplicates.
 - Optional cgroup wrapping via `systemd-run --user --scope` (`MemoryHigh`,
   `MemoryMax`, `MemorySwapMax`, `CPUQuota`, `TasksMax`).
 - WARC 1.0 records: `warcinfo`, `request`, `response`, gzip-compressed.
@@ -270,9 +274,22 @@ ads.example.com
 ```
 
 The blocklist is checked before the HTTP request. If the main URL's host is
-blocked, the snapshot is marked `blocked` and no request is made. This is a
-DNS/host-level guard, not a full in-page ad blocker, and it does not yet inspect
-redirect targets. CDP request interception and filter-list support are planned.
+blocked, the snapshot is marked `blocked` and no request is made.
+
+The same list also reaches the browser: every rendering pass starts Chrome with
+`--host-resolver-rules="MAP ads.example.com ~NOTFOUND, ..."`, because Chrome
+fetches images, scripts, and frames on its own, past the HTTP capture path. The
+page's own host and its parents are skipped, and `@@` exceptions win, so a
+document is never blocked by its own rules. Up to 512 rules are passed per page;
+anything beyond that would need a proxy or CDP interception instead.
+
+`arcbox blocklist check URL` prints `blocked:` or `allowed:` for a single URL,
+and `arcbox blocklist import FILE` merges an external list into `blocklist.txt`
+(hosts-file, bare domains, `||host^`, and `@@host` are all accepted). Importing
+the same list twice adds nothing.
+
+It is a DNS/host-level guard, not a full in-page ad blocker: cosmetic element
+hiding and redirect-target inspection are not implemented yet.
 
 ## Data layout
 

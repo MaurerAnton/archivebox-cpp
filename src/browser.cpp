@@ -12,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "arcbox/adblock.hpp"
 #include "arcbox/memory.hpp"
 #include "arcbox/util.hpp"
 
@@ -101,23 +102,41 @@ int run_browser_process(const std::vector<std::string>& argv,
     return 128 + WTERMSIG(status);
 }
 
-std::vector<std::string> base_args(const Config& cfg,
-                                   const std::string& browser) {
-    return {browser,
-            "--headless",
-            "--no-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--hide-scrollbars",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-extensions",
-            "--disable-background-networking",
-            "--user-agent=" + cfg.user_agent,
-            "--window-size=" + std::to_string(cfg.render_width) + "," +
-                std::to_string(cfg.render_height),
-            "--virtual-time-budget=" +
-                std::to_string(cfg.render_virtual_time_ms)};
+std::vector<std::string> base_args(
+    const Config& cfg,
+    const std::string& browser,
+    const std::vector<std::string>& resolver_rules) {
+    std::vector<std::string> args = {
+        browser,
+        "--headless",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--hide-scrollbars",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-extensions",
+        "--disable-background-networking",
+        "--user-agent=" + cfg.user_agent,
+        "--window-size=" + std::to_string(cfg.render_width) + "," +
+            std::to_string(cfg.render_height),
+        "--virtual-time-budget=" +
+            std::to_string(cfg.render_virtual_time_ms)};
+
+    // Chrome fetches subresources itself, so the HTTP blocklist cannot stop
+    // ads a page pulls in. Mapping the same hosts to ~NOTFOUND closes that gap
+    // without a proxy, a browser extension, or a persistent process.
+    if (!resolver_rules.empty()) {
+        std::string value;
+        for (std::size_t i = 0; i < resolver_rules.size(); ++i) {
+            if (i > 0) {
+                value += ", ";
+            }
+            value += "MAP " + resolver_rules[i] + " ~NOTFOUND";
+        }
+        args.push_back("--host-resolver-rules=" + value);
+    }
+    return args;
 }
 
 bool keep_artifact(const std::filesystem::path& path, long max_bytes) {
@@ -289,6 +308,12 @@ RenderResult render_page(const Config& cfg,
     std::string error;
     const int timeout = static_cast<int>(cfg.render_timeout_seconds);
 
+    // One blocklist read per render, not per artifact.
+    constexpr std::size_t kMaxResolverRules = 512;
+    Adblock adblock(cfg.blocklist_path());
+    const std::vector<std::string> resolver_rules =
+        adblock.resolver_rules(url, kMaxResolverRules);
+
     // Rendered DOM first: it is the cheapest artifact and the one replay
     // needs when the rest fails.
     std::vector<std::string> args;
@@ -296,7 +321,7 @@ RenderResult render_page(const Config& cfg,
     if (plan.dom()) {
         const std::filesystem::path html_path =
             cfg.resolve(relative_artifact(id, "rendered.html"));
-        args = base_args(cfg, browser);
+        args = base_args(cfg, browser, resolver_rules);
         args.push_back("--dump-dom");
         args.push_back(url);
         rc = run_browser_process(args, html_path.string(), timeout, error);
@@ -311,7 +336,7 @@ RenderResult render_page(const Config& cfg,
     if (plan.screenshot()) {
         const std::filesystem::path shot_path =
             cfg.resolve(relative_artifact(id, "screenshot.png"));
-        args = base_args(cfg, browser);
+        args = base_args(cfg, browser, resolver_rules);
         args.push_back("--screenshot=" + shot_path.string());
         args.push_back(url);
         error.clear();
@@ -326,7 +351,7 @@ RenderResult render_page(const Config& cfg,
     if (plan.pdf() && cfg.render_pdf) {
         const std::filesystem::path pdf_path =
             cfg.resolve(relative_artifact(id, "page.pdf"));
-        args = base_args(cfg, browser);
+        args = base_args(cfg, browser, resolver_rules);
         args.push_back("--print-to-pdf=" + pdf_path.string());
         args.push_back(url);
         error.clear();

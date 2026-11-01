@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include "arcbox/adblock.hpp"
@@ -283,6 +284,68 @@ int cmd_init(Config& cfg) {
               << "database: " << cfg.db_path().string() << "\n"
               << "blocklist: " << cfg.blocklist_path().string() << " ("
               << adblock.rules() << " rules)\n";
+    return 0;
+}
+
+int cmd_blocklist_check(Config& cfg, const std::string& url) {
+    Adblock adblock(cfg.blocklist_path());
+    const bool is_blocked = adblock.blocked(url);
+    std::cout << (is_blocked ? "blocked: " : "allowed: ") << url << "\n"
+              << "blocklist: " << cfg.blocklist_path().string() << " ("
+              << adblock.rules() << " rules)\n";
+    return 0;
+}
+
+int cmd_blocklist_import(Config& cfg, const std::string& path) {
+    cfg.ensure_dirs();
+
+    // Dedupe against what is already installed, so importing the same list
+    // twice stays idempotent.
+    std::unordered_set<std::string> known;
+    {
+        std::ifstream existing(cfg.blocklist_path());
+        std::string line;
+        while (std::getline(existing, line)) {
+            BlockRule rule;
+            if (parse_block_rule(line, rule)) {
+                known.insert(rule.host);
+            }
+        }
+    }
+
+    std::ifstream in(path);
+    if (!in) {
+        return fail("cannot read blocklist source: " + path);
+    }
+
+    std::ofstream out(cfg.blocklist_path(), std::ios::app);
+    if (!out) {
+        return fail("cannot append to blocklist: " +
+                    cfg.blocklist_path().string());
+    }
+
+    std::size_t added = 0;
+    std::size_t duplicates = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        BlockRule rule;
+        if (!parse_block_rule(line, rule)) {
+            continue;
+        }
+        if (!known.insert(rule.host).second) {
+            ++duplicates;
+            continue;
+        }
+        out << (rule.exception ? "@@" : "") << rule.host << "\n";
+        ++added;
+    }
+    if (!out) {
+        return fail("failed while writing " + cfg.blocklist_path().string());
+    }
+
+    std::cout << "imported " << added << " new rules (" << duplicates
+              << " duplicates skipped) into " << cfg.blocklist_path().string()
+              << "\n";
     return 0;
 }
 

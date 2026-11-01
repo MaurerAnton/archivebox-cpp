@@ -36,6 +36,11 @@
 - [x] Size-aware render admission: a source above
       `ARCBOX_RENDER_MAX_SOURCE_BYTES` is archived without a browser.
 - [ ] Element-level ad blocking inside the browser (needs CDP interception).
+- [x] Network-level ad blocking inside the browser: the blocklist becomes
+      `--host-resolver-rules` per render pass (capped, page host and exceptions
+      skipped).
+- [x] `arcbox blocklist check URL` and `arcbox blocklist import FILE` for ABP
+      and hosts-file lists.
 
 ## v0.4 — memory-aware scheduling
 
@@ -50,7 +55,8 @@ The admission guard already shipped early, as part of v0.2:
 ## v0.5 — ad blocking and replay
 
 - [ ] CDP Fetch interception with filter-list rules.
-- [ ] Import hosts/ABP lists; update command.
+- [x] Import hosts/ABP lists (`arcbox blocklist import`); fetching and updating
+      a remote list on a schedule is still open.
 - [ ] Per-snapshot block decision log.
 - [ ] Localhost-only search/replay UI (already shipped in v0.2).
 - [ ] WACZ export.
